@@ -1,9 +1,8 @@
 import { useCan } from '@/features/server/hooks';
 import { useIsOwnUser } from '@/features/server/users/hooks';
 import { Permission, type TJoinedMessage } from '@sharkord/shared';
-import { memo, useMemo, useState } from 'react';
+import { memo, useMemo } from 'react';
 import { MessageActions } from './message-actions';
-import { MessageEditInline } from './message-edit-inline';
 import { MessageRenderer } from './renderer';
 
 type TMessageProps = {
@@ -12,7 +11,6 @@ type TMessageProps = {
 };
 
 const Message = memo(({ message, onOpenThread }: TMessageProps) => {
-  const [isEditing, setIsEditing] = useState(false);
   const isFromOwnUser = useIsOwnUser(message.userId);
   const can = useCan();
 
@@ -23,28 +21,19 @@ const Message = memo(({ message, onOpenThread }: TMessageProps) => {
 
   return (
     <div className="min-w-0 flex-1 ml-1 relative hover:bg-secondary/50 rounded-md px-1 py-0.5 group">
-      {!isEditing ? (
-        <>
-          <MessageRenderer message={message} />
-          <MessageActions
-            onEdit={() => setIsEditing(true)}
-            canManage={canManage}
-            messageId={message.id}
-            editable={message.editable ?? false}
-            onOpenThread={
-              onOpenThread && !message.parentMessageId
-                ? () => onOpenThread(message)
-                : undefined
-            }
-            showThreadAction={!message.parentMessageId}
-          />
-        </>
-      ) : (
-        <MessageEditInline
-          message={message}
-          onBlur={() => setIsEditing(false)}
+      <>
+        <MessageRenderer message={message} />
+        <MessageActions
+          canManage={canManage}
+          messageId={message.id}
+          onOpenThread={
+            onOpenThread && !message.parentMessageId
+              ? () => onOpenThread(message)
+              : undefined
+          }
+          showThreadAction={!message.parentMessageId}
         />
-      )}
+      </>
     </div>
   );
 });

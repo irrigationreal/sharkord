@@ -774,14 +774,21 @@ const hydrateMessagesWithCachedE2EE = (
   messages.map((message) => {
     const clientMessageId = parseClientMessageIdMarker(message);
 
-    if (!clientMessageId) return message;
+    if (!clientMessageId) {
+      return {
+        ...message,
+        content: '<p><em>Blocked non-E2EE message</em></p>',
+        files: []
+      };
+    }
 
     const cached = getCachedDecrypted(channelId, clientMessageId);
 
     if (!cached) {
       return {
         ...message,
-        content: '<p><em>Encrypted message</em></p>'
+        content: '<p><em>Encrypted message</em></p>',
+        files: []
       };
     }
 

@@ -5,7 +5,7 @@ import type { TEmojiItem } from '@/components/tiptap-input/types';
 import { requestConfirmation } from '@/features/dialogs/actions';
 import { getTRPCClient } from '@/lib/trpc';
 import { Permission } from '@sharkord/shared';
-import { MessageSquareReply, Pencil, Smile, Trash } from 'lucide-react';
+import { MessageSquareReply, Smile, Trash } from 'lucide-react';
 import { IconButton } from '@sharkord/ui';
 import { memo, useCallback, useMemo } from 'react';
 import { toast } from 'sonner';
@@ -14,19 +14,15 @@ const MAX_QUICK_EMOJIS = 4;
 
 type TMessageActionsProps = {
   messageId: number;
-  onEdit: () => void;
   canManage: boolean;
-  editable: boolean;
   onOpenThread?: () => void;
   showThreadAction?: boolean;
 };
 
 const MessageActions = memo(
   ({
-    onEdit,
     messageId,
     canManage,
-    editable,
     onOpenThread,
     showThreadAction
   }: TMessageActionsProps) => {
@@ -79,15 +75,6 @@ const MessageActions = memo(
       <div className="gap-1 absolute right-0 -top-6 z-10 hidden group-hover:flex [&:has([data-state=open])]:flex items-center space-x-1 rounded-lg shadow-lg border border-border p-1 transition-all h-8 ">
         {canManage && (
           <>
-            <IconButton
-              size="sm"
-              variant="ghost"
-              icon={Pencil}
-              onClick={onEdit}
-              disabled={!editable}
-              title="Edit Message"
-            />
-
             <IconButton
               size="sm"
               variant="ghost"

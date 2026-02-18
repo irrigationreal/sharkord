@@ -1,4 +1,4 @@
-import { ChannelPermission, Permission } from '@sharkord/shared';
+import { Permission } from '@sharkord/shared';
 import { z } from 'zod';
 import { config } from '../../config';
 import { invariant } from '../../utils/invariant';
@@ -9,22 +9,9 @@ const sendMessageRoute = rateLimitedProcedure(protectedProcedure, {
   windowMs: config.rateLimiters.sendAndEditMessage.windowMs,
   logLabel: 'sendMessage'
 })
-  .input(
-    z.object({
-      content: z.string(),
-      channelId: z.number(),
-      parentMessageId: z.number().int().positive().optional(),
-      files: z.array(z.string()).optional()
-    })
-  )
-  .mutation(async ({ input, ctx }) => {
-    await Promise.all([
-      ctx.needsPermission(Permission.SEND_MESSAGES),
-      ctx.needsChannelPermission(
-        input.channelId,
-        ChannelPermission.SEND_MESSAGES
-      )
-    ]);
+  .input(z.unknown())
+  .mutation(async ({ ctx }) => {
+    await ctx.needsPermission(Permission.SEND_MESSAGES);
 
     invariant(false, {
       code: 'FORBIDDEN',
