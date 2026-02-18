@@ -6,7 +6,7 @@ import { IconButton } from '@/components/ui/icon-button';
 import { requestConfirmation } from '@/features/dialogs/actions';
 import { getTRPCClient } from '@/lib/trpc';
 import { Permission } from '@sharkord/shared';
-import { Pencil, Smile, Trash } from 'lucide-react';
+import { MessageSquareReply, Pencil, Smile, Trash } from 'lucide-react';
 import { memo, useCallback, useMemo } from 'react';
 import { toast } from 'sonner';
 
@@ -17,10 +17,19 @@ type TMessageActionsProps = {
   onEdit: () => void;
   canManage: boolean;
   editable: boolean;
+  onOpenThread?: () => void;
+  showThreadAction?: boolean;
 };
 
 const MessageActions = memo(
-  ({ onEdit, messageId, canManage, editable }: TMessageActionsProps) => {
+  ({
+    onEdit,
+    messageId,
+    canManage,
+    editable,
+    onOpenThread,
+    showThreadAction
+  }: TMessageActionsProps) => {
     const { recentEmojis } = useRecentEmojis();
     const recentEmojisToShow = useMemo(
       () => recentEmojis.slice(0, MAX_QUICK_EMOJIS),
@@ -87,6 +96,15 @@ const MessageActions = memo(
               title="Delete Message"
             />
           </>
+        )}
+        {showThreadAction && onOpenThread && (
+          <IconButton
+            size="sm"
+            variant="ghost"
+            icon={MessageSquareReply}
+            onClick={onOpenThread}
+            title="Open Thread"
+          />
         )}
         <Protect permission={Permission.REACT_TO_MESSAGES}>
           <div className="flex items-center space-x-0.5 border-l pl-1 gap-1">

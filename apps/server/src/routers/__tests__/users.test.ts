@@ -1,10 +1,12 @@
 import {
   DELETED_USER_IDENTITY_AND_NAME,
-  sha256,
   type TTempFile
 } from '@sharkord/shared';
 import { describe, expect, test } from 'bun:test';
 import { and, eq } from 'drizzle-orm';
+import { appRouter } from '../../routers';
+import { createMockContext } from '../../__tests__/context';
+import { verifyPassword } from '../../helpers/password';
 import { initTest, uploadFile } from '../../__tests__/helpers';
 import { tdb } from '../../__tests__/setup';
 import {
@@ -13,8 +15,22 @@ import {
   files,
   messageReactions,
   messages,
+  authSessions,
   users
 } from '../../db/schema';
+import { createAuthSession } from '../../db/queries/auth-sessions';
+
+const getSessionCaller = async (accessToken: string) => {
+  const context = await createMockContext({ customToken: accessToken });
+  const caller = appRouter.createCaller(context);
+  const { handshakeHash } = await caller.others.handshake();
+
+  await caller.others.joinServer({
+    handshakeHash
+  });
+
+  return caller;
+};
 
 describe('users router', () => {
   test('should throw when user lacks permissions (getAll)', async () => {
@@ -196,10 +212,8 @@ describe('users router', () => {
     // should not be plain text
     expect(row!.password).not.toBe(newPassword);
 
-    const hashedPassword = await sha256(newPassword);
-
-    // should be hashed
-    expect(row!.password).toBe(hashedPassword);
+    // should be verifiable after update
+    expect(await verifyPassword(newPassword, row!.password)).toBe(true);
   });
 
   test('should throw when current password is incorrect', async () => {
@@ -904,5 +918,47 @@ describe('users router', () => {
     expect(info.user.name).toBe('Final Name');
     expect(info.user.bannerColor).toBe('#333333');
     expect(info.user.bio).toBe('Final Bio');
+  });
+
+  test('should revoke the current session on logout', async () => {
+    const { sessionId, accessToken } = await createAuthSession(1, {
+      ip: '127.0.0.1'
+    });
+    const caller = await getSessionCaller(accessToken);
+
+    await caller.users.logout();
+
+    const session = await tdb
+      .select()
+      .from(authSessions)
+      .where(eq(authSessions.id, sessionId))
+      .get();
+
+    expect(session?.revokedAt).toBeDefined();
+    expect(session?.revokedReason).toBe('user_logout');
+  });
+
+  test('should revoke all user sessions on logoutAll', async () => {
+    const first = await createAuthSession(1, {
+      ip: '127.0.0.1'
+    });
+    const second = await createAuthSession(1, {
+      ip: '127.0.0.2'
+    });
+    const caller = await getSessionCaller(first.accessToken);
+
+    await caller.users.logoutAll();
+
+    const sessions = await tdb
+      .select()
+      .from(authSessions)
+      .where(eq(authSessions.userId, 1))
+      .all();
+
+    expect(sessions.find((session) => session.id === first.sessionId)?.revokedAt).toBeDefined();
+    expect(
+      sessions.find((session) => session.id === second.sessionId)?.revokedAt
+    ).toBeDefined();
+    expect(sessions.every((session) => session.revokedAt !== null)).toBe(true);
   });
 });

@@ -7,7 +7,7 @@ import {
   type TJoinedMessageReaction,
   type TMessage
 } from '@sharkord/shared';
-import { and, desc, eq, inArray, lt } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../../db';
 import { getChannelsReadStatesForUser } from '../../db/queries/channels';
@@ -29,6 +29,7 @@ const getMessagesRoute = protectedProcedure
     z.object({
       channelId: z.number(),
       cursor: z.number().nullish(),
+      parentMessageId: z.number().int().positive().nullable().optional(),
       limit: z.number().default(DEFAULT_MESSAGES_LIMIT)
     })
   )
@@ -40,6 +41,26 @@ const getMessagesRoute = protectedProcedure
     );
 
     const { channelId, cursor, limit } = input;
+    let targetParentMessageId = input.parentMessageId ?? null;
+
+    if (typeof targetParentMessageId === 'number') {
+      const parentMessage = await db
+        .select({
+          id: messages.id,
+          channelId: messages.channelId,
+          parentMessageId: messages.parentMessageId
+        })
+        .from(messages)
+        .where(eq(messages.id, targetParentMessageId))
+        .get();
+
+      invariant(parentMessage && parentMessage.channelId === channelId, {
+        code: 'BAD_REQUEST',
+        message: 'Invalid parent message for thread'
+      });
+
+      targetParentMessageId = parentMessage.parentMessageId ?? parentMessage.id;
+    }
 
     const channel = await db
       .select({
@@ -62,9 +83,17 @@ const getMessagesRoute = protectedProcedure
         cursor
           ? and(
               eq(messages.channelId, channelId),
+              targetParentMessageId === null
+                ? isNull(messages.parentMessageId)
+                : eq(messages.parentMessageId, targetParentMessageId),
               lt(messages.createdAt, cursor)
             )
-          : eq(messages.channelId, channelId)
+          : and(
+              eq(messages.channelId, channelId),
+              targetParentMessageId === null
+                ? isNull(messages.parentMessageId)
+                : eq(messages.parentMessageId, targetParentMessageId)
+            )
       )
       .orderBy(desc(messages.createdAt))
       .limit(limit + 1);
@@ -83,7 +112,7 @@ const getMessagesRoute = protectedProcedure
 
     const messageIds = rows.map((m) => m.id);
 
-    const [fileRows, reactionRows] = await Promise.all([
+    const [fileRows, reactionRows, replyCountRows] = await Promise.all([
       db
         .select({
           messageId: messageFiles.messageId,
@@ -103,7 +132,15 @@ const getMessagesRoute = protectedProcedure
         })
         .from(messageReactions)
         .leftJoin(files, eq(messageReactions.fileId, files.id))
-        .where(inArray(messageReactions.messageId, messageIds))
+        .where(inArray(messageReactions.messageId, messageIds)),
+      db
+        .select({
+          parentMessageId: messages.parentMessageId,
+          count: sql<number>`count(*)`
+        })
+        .from(messages)
+        .where(inArray(messages.parentMessageId, messageIds))
+        .groupBy(messages.parentMessageId)
     ]);
 
     const filesByMessage = fileRows.reduce<Record<number, TFile[]>>(
@@ -155,17 +192,32 @@ const getMessagesRoute = protectedProcedure
 
       return acc;
     }, {});
+    const replyCountByMessage = replyCountRows.reduce<Record<number, number>>(
+      (acc, row) => {
+        if (typeof row.parentMessageId === 'number') {
+          acc[row.parentMessageId] = Number(row.count || 0);
+        }
+
+        return acc;
+      },
+      {}
+    );
 
     // Combine messages with files and reactions
     const messagesWithFiles: TJoinedMessage[] = rows.map((msg) => ({
       ...msg,
       files: filesByMessage[msg.id] ?? [],
-      reactions: reactionsByMessage[msg.id] ?? []
+      reactions: reactionsByMessage[msg.id] ?? [],
+      threadReplyCount: replyCountByMessage[msg.id] ?? 0
     }));
 
     // always update read state to the absolute latest message in the channel
     // (not just the newest in this batch, in case user is scrolling back through history)
     // this is not ideal, but it's good enough for now
+    if (targetParentMessageId !== null) {
+      return { messages: messagesWithFiles, nextCursor };
+    }
+
     const [, , latestMessage] = await Promise.all([
       Promise.resolve(fileRows),
       Promise.resolve(reactionRows),

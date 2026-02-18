@@ -109,6 +109,7 @@ export type TJoinedMessageReaction = TMessageReaction & {
 export type TJoinedMessage = TMessage & {
   files: TFile[];
   reactions: TJoinedMessageReaction[];
+  threadReplyCount?: number;
 };
 
 export type TJoinedEmoji = TEmoji & {

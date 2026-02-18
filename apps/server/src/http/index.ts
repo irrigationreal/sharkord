@@ -13,8 +13,12 @@ import { healthRouteHandler } from './healthz';
 import { infoRouteHandler } from './info';
 import { interfaceRouteHandler } from './interface';
 import { loginRouteHandler } from './login';
+import { sessionRefreshRouteHandler } from './session-refresh';
 import { publicRouteHandler } from './public';
 import { uploadFileRouteHandler } from './upload';
+import { authLogoutRouteHandler } from './auth/logout';
+import { discordCallbackRouteHandler } from './auth/discord-callback';
+import { discordStartRouteHandler } from './auth/discord-start';
 import { HttpValidationError } from './utils';
 
 // 5 attempts per minute per IP for login route
@@ -23,14 +27,116 @@ const loginRateLimiter = createRateLimiter({
   windowMs: config.rateLimiters.joinServer.windowMs
 });
 
+const parseAllowedOrigins = (rawValue: string): string[] => {
+  const normalized = rawValue.trim();
+
+  if (!normalized) return [];
+
+  try {
+    const parsed = JSON.parse(normalized);
+
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map((item) => String(item).trim())
+        .filter(Boolean)
+        .map((item) =>
+          item.toLowerCase().replace(/\/+$/, '')
+        );
+    }
+  } catch {
+    // fall through to csv parsing
+  }
+
+  return normalized
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => item.toLowerCase().replace(/\/+$/, ''));
+};
+
+const parseOrigin = (
+  rawOrigin: string
+): { origin: string; host: string } | undefined => {
+  try {
+    const parsed = new URL(rawOrigin);
+
+    return {
+      origin: parsed.origin.toLowerCase(),
+      host: parsed.host.toLowerCase()
+    };
+  } catch {
+    return undefined;
+  }
+};
+
+const getAllowedOrigin = (
+  origin: string | string[] | undefined,
+  requestHost: string | undefined
+): string => {
+  if (typeof origin !== 'string') return '';
+  if (!origin) return '';
+
+  if (config.server.debug) {
+    return origin;
+  }
+
+  const originInfo = parseOrigin(origin);
+
+  if (!originInfo) {
+    return '';
+  }
+
+  const normalizedAllowedOrigins = parseAllowedOrigins(config.server.allowedOrigins);
+  const isAllowedOrigin = normalizedAllowedOrigins.includes(originInfo.origin);
+  const isSameHost = requestHost
+    ? originInfo.host === requestHost.toLowerCase()
+    : false;
+
+  return isAllowedOrigin || isSameHost ? origin : '';
+};
+
+const sendSecurityHeaders = (
+  req: http.IncomingMessage,
+  res: http.ServerResponse
+) => {
+  const origin = req.headers.origin;
+  const allowedOrigin = getAllowedOrigin(origin, req.headers.host);
+  const hasOrigin = typeof origin === 'string' && origin.length > 0;
+
+  if (allowedOrigin) {
+    res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  } else if (!origin) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', 'null');
+  }
+
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'content-type, origin, sec-fetch-mode, x-file-name, x-file-type, content-length, x-token'
+  );
+  res.setHeader('Content-Security-Policy', "default-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+
+  return hasOrigin ? Boolean(allowedOrigin) : true;
+};
+
 // this http server implementation is temporary and will be moved to bun server later when things are more stable
 const createHttpServer = async (port: number = config.server.port) => {
   return new Promise<http.Server>((resolve) => {
     const server = http.createServer(
       async (req: http.IncomingMessage, res: http.ServerResponse) => {
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', '*');
+        const isOriginAllowed = sendSecurityHeaders(req, res);
+
+        if (!isOriginAllowed) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Origin not allowed' }));
+          return;
+        }
 
         const info = getWsInfo(undefined, req);
 
@@ -49,6 +155,20 @@ const createHttpServer = async (port: number = config.server.port) => {
             return await healthRouteHandler(req, res);
           }
 
+          if (
+            req.method === 'GET' &&
+            req.url?.startsWith('/auth/discord/start')
+          ) {
+            return await discordStartRouteHandler(req, res);
+          }
+
+          if (
+            req.method === 'GET' &&
+            req.url?.startsWith('/auth/discord/callback')
+          ) {
+            return await discordCallbackRouteHandler(req, res);
+          }
+
           if (req.method === 'GET' && req.url === '/info') {
             return await infoRouteHandler(req, res);
           }
@@ -57,11 +177,9 @@ const createHttpServer = async (port: number = config.server.port) => {
             return await uploadFileRouteHandler(req, res);
           }
 
-          if (req.method === 'POST' && req.url === '/login') {
+          const handleLoginRequest = async () => {
             if (info?.ip) {
-              // we can only rate limit if we have the client's IP
-
-              const key = getClientRateLimitKey(info?.ip);
+              const key = getClientRateLimitKey(info.ip);
               const rateLimit = loginRateLimiter.consume(key);
 
               if (!rateLimit.allowed) {
@@ -86,11 +204,24 @@ const createHttpServer = async (port: number = config.server.port) => {
               }
             } else {
               logger.warn(
-                `${chalk.dim('[Rate Limiter HTTP]')} Missing IP address in request info, skipping rate limiting for /login route.`
+                `${chalk.dim('[Rate Limiter HTTP]')} Missing IP address in request info, skipping rate limiting for login route.`
               );
             }
 
-            return await loginRouteHandler(req, res);
+            await loginRouteHandler(req, res);
+          };
+
+          if (req.method === 'POST' && req.url === '/login') {
+            await handleLoginRequest();
+            return;
+          }
+
+          if (req.method === 'POST' && req.url === '/auth/session/refresh') {
+            return await sessionRefreshRouteHandler(req, res);
+          }
+
+          if (req.method === 'POST' && req.url === '/auth/logout') {
+            return await authLogoutRouteHandler(req, res);
           }
 
           if (req.method === 'GET' && req.url?.startsWith('/public')) {

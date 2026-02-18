@@ -27,6 +27,7 @@ import {
   userRoles,
   users
 } from '../db/schema';
+import { getOwnerBootstrapTokenHash } from '../helpers/server-secrets';
 
 const TEST_SECRET_TOKEN = 'test-secret-token-for-unit-tests';
 
@@ -38,7 +39,7 @@ const seedDatabase = async (db: BunSQLiteDatabase) => {
     description: 'Test server description',
     password: '',
     serverId: randomUUIDv7(),
-    secretToken: await sha256(TEST_SECRET_TOKEN),
+    secretToken: getOwnerBootstrapTokenHash(TEST_SECRET_TOKEN),
     allowNewUsers: true,
     storageUploadEnabled: true,
     storageQuota: STORAGE_QUOTA,

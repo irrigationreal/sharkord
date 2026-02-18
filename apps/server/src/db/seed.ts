@@ -30,6 +30,7 @@ import {
   userRoles,
   users
 } from './schema';
+import { getOwnerBootstrapTokenHash } from '../helpers/server-secrets';
 
 const seedDatabase = async () => {
   const needsSeeding = (await db.select().from(settings)).length === 0;
@@ -47,7 +48,7 @@ const seedDatabase = async () => {
       'This is the default Sharkord server description. Change me in the server settings!',
     password: '',
     serverId: Bun.randomUUIDv7(),
-    secretToken: await sha256(originalToken),
+    secretToken: getOwnerBootstrapTokenHash(originalToken),
     allowNewUsers: true,
     storageUploadEnabled: true,
     storageQuota: STORAGE_QUOTA,

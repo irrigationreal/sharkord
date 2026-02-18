@@ -8,9 +8,10 @@ import { MessageRenderer } from './renderer';
 
 type TMessageProps = {
   message: TJoinedMessage;
+  onOpenThread?: (message: TJoinedMessage) => void;
 };
 
-const Message = memo(({ message }: TMessageProps) => {
+const Message = memo(({ message, onOpenThread }: TMessageProps) => {
   const [isEditing, setIsEditing] = useState(false);
   const isFromOwnUser = useIsOwnUser(message.userId);
   const can = useCan();
@@ -30,6 +31,12 @@ const Message = memo(({ message }: TMessageProps) => {
             canManage={canManage}
             messageId={message.id}
             editable={message.editable ?? false}
+            onOpenThread={
+              onOpenThread && !message.parentMessageId
+                ? () => onOpenThread(message)
+                : undefined
+            }
+            showThreadAction={!message.parentMessageId}
           />
         </>
       ) : (

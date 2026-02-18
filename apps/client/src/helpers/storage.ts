@@ -14,7 +14,10 @@ export enum LocalStorageKey {
 }
 
 export enum SessionStorageKey {
-  TOKEN = 'sharkord-token'
+  TOKEN = 'sharkord-token',
+  REFRESH_TOKEN = 'sharkord-refresh-token',
+  ACCESS_TOKEN_EXPIRES_AT = 'sharkord-access-token-expires-at',
+  REFRESH_TOKEN_EXPIRES_AT = 'sharkord-refresh-token-expires-at'
 }
 
 const getLocalStorageItem = (key: LocalStorageKey): string | null => {

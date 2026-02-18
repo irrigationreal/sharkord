@@ -12,3 +12,11 @@ export const messagesByChannelIdSelector = (
   state: IRootState,
   channelId: number
 ) => state.server.messagesMap[channelId] || DEFAULT_ARRAY;
+
+export const threadMessagesByChannelAndRootSelector = (
+  state: IRootState,
+  channelId: number,
+  threadRootMessageId: number
+) =>
+  state.server.threadMessagesMap[`${channelId}:${threadRootMessageId}`] ||
+  DEFAULT_ARRAY;

@@ -1,22 +1,26 @@
 import {
   ActivityLogType,
   DELETED_USER_IDENTITY_AND_NAME,
-  sha256,
   type TJoinedUser
 } from '@sharkord/shared';
 import { eq, sql } from 'drizzle-orm';
 import http from 'http';
-import jwt from 'jsonwebtoken';
 import z from 'zod';
 import { db } from '../db';
 import { publishUser } from '../db/publishers';
+import { createAuthSession } from '../db/queries/auth-sessions';
 import { isInviteValid } from '../db/queries/invites';
 import { getDefaultRole } from '../db/queries/roles';
-import { getServerToken, getSettings } from '../db/queries/server';
+import { getSettings } from '../db/queries/server';
 import { getUserByIdentity } from '../db/queries/users';
 import { invites, userRoles, users } from '../db/schema';
 import { getWsInfo } from '../helpers/get-ws-info';
 import { enqueueActivityLog } from '../queues/activity-log';
+import { 
+  hashPassword,
+  passwordNeedsRehash,
+  verifyPassword
+} from '../helpers/password';
 import { invariant } from '../utils/invariant';
 import { getJsonBody } from './helpers';
 import { HttpValidationError } from './utils';
@@ -33,7 +37,7 @@ const registerUser = async (
   inviteCode?: string,
   ip?: string
 ): Promise<TJoinedUser> => {
-  const hashedPassword = await sha256(password);
+  const hashedPassword = await hashPassword(password);
 
   const defaultRole = await getDefaultRole();
 
@@ -126,19 +130,36 @@ const loginRouteHandler = async (
     );
   }
 
-  const hashedPassword = await sha256(data.password);
-  const passwordMatches = existingUser.password === hashedPassword;
+  const passwordMatches = await verifyPassword(data.password, existingUser.password);
 
   if (!passwordMatches) {
     throw new HttpValidationError('password', 'Invalid password');
   }
 
-  const token = jwt.sign({ userId: existingUser.id }, await getServerToken(), {
-    expiresIn: '86400s' // 1 day
-  });
+  if (passwordNeedsRehash(existingUser.password)) {
+    await db
+      .update(users)
+      .set({
+        password: await hashPassword(data.password)
+      })
+      .where(eq(users.id, existingUser.id))
+      .run();
+  }
+
+  const { accessToken, refreshToken, accessExpiresAt, refreshExpiresAt, sessionId } =
+    await createAuthSession(existingUser.id, connectionInfo);
 
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ success: true, token }));
+  res.end(
+    JSON.stringify({
+      success: true,
+      token: accessToken,
+      refreshToken,
+      accessExpiresAt,
+      refreshExpiresAt,
+      sessionId
+    })
+  );
 
   return res;
 };

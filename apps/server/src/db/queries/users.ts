@@ -5,11 +5,16 @@ import {
 } from '@sharkord/shared';
 import { count, eq, sum } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
-import jwt from 'jsonwebtoken';
 import { db } from '..';
-import type { TTokenPayload } from '../../types';
 import { files, userRoles, users } from '../schema';
-import { getServerToken } from './server';
+import { getSessionByAccessToken } from './auth-sessions';
+
+type TTokenContext = {
+  user: TJoinedUser;
+  userId: number;
+  sessionId?: number;
+  userDeviceId?: number | null;
+};
 
 const getPublicUserById = async (
   userId: number
@@ -283,17 +288,46 @@ const getUserByIdentity = async (
 };
 
 const getUserByToken = async (token: string | undefined) => {
-  try {
-    if (!token) return undefined;
+  const context = await getUserTokenContext(token);
 
-    const decoded = jwt.verify(token, await getServerToken()) as TTokenPayload;
+  return context?.user;
+};
 
-    const user = await getUserById(decoded.userId);
+const getUserTokenContext = async (
+  token: string | undefined
+): Promise<TTokenContext | undefined> => {
+  if (!token) return undefined;
 
-    return user;
-  } catch {
-    return undefined;
+  const sessionContext = await getSessionByAccessToken(token);
+
+  if (sessionContext) {
+    const sessionUser = await getUserById(sessionContext.userId);
+
+    if (!sessionUser) return undefined;
+
+    return {
+      user: sessionUser,
+      userId: sessionContext.userId,
+      sessionId: sessionContext.sessionId,
+      userDeviceId: sessionContext.userDeviceId
+    };
   }
+
+  return undefined;
+};
+
+const getSessionContextByToken = async (
+  token: string | undefined
+): Promise<Omit<TTokenContext, 'user'> | undefined> => {
+  const context = await getUserTokenContext(token);
+
+  if (!context?.user) return undefined;
+
+  return {
+    userId: context.userId,
+    sessionId: context.sessionId,
+    userDeviceId: context.userDeviceId
+  };
 };
 
 const getUsers = async (): Promise<TJoinedUser[]> => {
@@ -370,5 +404,6 @@ export {
   getUserById,
   getUserByIdentity,
   getUserByToken,
+  getSessionContextByToken,
   getUsers
 };

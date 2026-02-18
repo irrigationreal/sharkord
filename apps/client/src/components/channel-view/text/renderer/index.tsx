@@ -1,3 +1,7 @@
+import {
+  getStrictE2EEFileMeta,
+  openStrictE2EEFile
+} from '@/features/e2ee/shadow';
 import { requestConfirmation } from '@/features/dialogs/actions';
 import { useOwnUserId } from '@/features/server/users/hooks';
 import { getFileUrl } from '@/helpers/get-file-url';
@@ -60,6 +64,7 @@ const MessageRenderer = memo(({ message }: TMessageRendererProps) => {
 
   const allMedia = useMemo(() => {
     const mediaFromFiles: TFoundMedia[] = message.files
+      .filter((file) => !getStrictE2EEFileMeta(message.id, file.id))
       .filter((file) => imageExtensions.includes(file.extension))
       .map((file) => ({
         type: 'image',
@@ -67,7 +72,7 @@ const MessageRenderer = memo(({ message }: TMessageRendererProps) => {
       }));
 
     return [...foundMedia, ...mediaFromFiles];
-  }, [foundMedia, message.files]);
+  }, [foundMedia, message.files, message.id]);
 
   return (
     <div className="flex flex-col gap-1">
@@ -87,18 +92,33 @@ const MessageRenderer = memo(({ message }: TMessageRendererProps) => {
 
       {message.files.length > 0 && (
         <div className="flex gap-1 flex-wrap">
-          {message.files.map((file) => (
-            <FileCard
-              key={file.id}
-              name={file.originalName}
-              extension={file.extension}
-              size={file.size}
-              onRemove={
-                isOwnMessage ? () => onRemoveFileClick(file.id) : undefined
-              }
-              href={getFileUrl(file)}
-            />
-          ))}
+          {message.files.map((file) => {
+            const strictMeta = getStrictE2EEFileMeta(message.id, file.id);
+
+            return (
+              <FileCard
+                key={file.id}
+                name={strictMeta?.originalName || file.originalName}
+                extension={file.extension}
+                size={strictMeta?.originalSize || file.size}
+                onRemove={
+                  isOwnMessage ? () => onRemoveFileClick(file.id) : undefined
+                }
+                href={strictMeta ? undefined : getFileUrl(file)}
+                onOpen={
+                  strictMeta
+                    ? () =>
+                        openStrictE2EEFile({
+                          messageId: message.id,
+                          file
+                        }).catch(() => {
+                          toast.error('Failed to open encrypted attachment');
+                        })
+                    : undefined
+                }
+              />
+            );
+          })}
         </div>
       )}
     </div>

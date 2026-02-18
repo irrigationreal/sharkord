@@ -5,7 +5,7 @@ import {
   Permission,
   toDomCommand
 } from '@sharkord/shared';
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { config } from '../../config';
 import { db } from '../../db';
@@ -30,15 +30,16 @@ const sendMessageRoute = rateLimitedProcedure(protectedProcedure, {
   logLabel: 'sendMessage'
 })
   .input(
-    z
-      .object({
-        content: z.string(),
-        channelId: z.number(),
-        files: z.array(z.string()).optional()
-      })
-      .required()
+    z.object({
+      content: z.string(),
+      channelId: z.number(),
+      parentMessageId: z.number().int().positive().optional(),
+      files: z.array(z.string()).optional()
+    })
   )
   .mutation(async ({ input, ctx }) => {
+    const files = input.files ?? [];
+
     await Promise.all([
       ctx.needsPermission(Permission.SEND_MESSAGES),
       ctx.needsChannelPermission(
@@ -47,18 +48,54 @@ const sendMessageRoute = rateLimitedProcedure(protectedProcedure, {
       )
     ]);
 
-    invariant(!isEmptyMessage(input.content) || input.files.length != 0, {
+    invariant(!isEmptyMessage(input.content) || files.length != 0, {
       code: 'BAD_REQUEST',
       message: 'Message cannot be empty.'
     });
 
     let targetContent = sanitizeMessageHtml(input.content);
 
-    invariant(!isEmptyMessage(input.content) || input.files.length != 0, {
+    invariant(!isEmptyMessage(input.content) || files.length != 0, {
       code: 'BAD_REQUEST',
       message:
         'Your message only contained unsupported or removed content, so there was nothing to send.'
     });
+
+    let threadRootMessageId: number | null = null;
+
+    if (typeof input.parentMessageId === 'number') {
+      const parentMessage = await db
+        .select({
+          id: messages.id,
+          channelId: messages.channelId,
+          parentMessageId: messages.parentMessageId
+        })
+        .from(messages)
+        .where(eq(messages.id, input.parentMessageId))
+        .get();
+
+      invariant(parentMessage && parentMessage.channelId === input.channelId, {
+        code: 'BAD_REQUEST',
+        message: 'Invalid parent message for thread'
+      });
+
+      const normalizedRootId =
+        parentMessage.parentMessageId ?? parentMessage.id;
+      const rootMessage = await db
+        .select({ id: messages.id, channelId: messages.channelId })
+        .from(messages)
+        .where(
+          and(eq(messages.id, normalizedRootId), isNull(messages.parentMessageId))
+        )
+        .get();
+
+      invariant(rootMessage && rootMessage.channelId === input.channelId, {
+        code: 'BAD_REQUEST',
+        message: 'Invalid thread root'
+      });
+
+      threadRootMessageId = rootMessage.id;
+    }
 
     let editable = true;
     let commandExecutor: ((messageId: number) => void) | undefined = undefined;
@@ -163,6 +200,7 @@ const sendMessageRoute = rateLimitedProcedure(protectedProcedure, {
       .values({
         channelId: input.channelId,
         userId: ctx.userId,
+        parentMessageId: threadRootMessageId,
         content: targetContent,
         editable,
         createdAt: Date.now()
@@ -172,8 +210,8 @@ const sendMessageRoute = rateLimitedProcedure(protectedProcedure, {
 
     commandExecutor?.(message.id);
 
-    if (input.files.length > 0) {
-      for (const tempFileId of input.files) {
+    if (files.length > 0) {
+      for (const tempFileId of files) {
         const newFile = await fileManager.saveFile(tempFileId, ctx.userId);
 
         await db.insert(messageFiles).values({
@@ -185,6 +223,9 @@ const sendMessageRoute = rateLimitedProcedure(protectedProcedure, {
     }
 
     publishMessage(message.id, input.channelId, 'create');
+    if (threadRootMessageId) {
+      publishMessage(threadRootMessageId, input.channelId, 'update');
+    }
     enqueueProcessMetadata(targetContent, message.id);
 
     eventBus.emit('message:created', {

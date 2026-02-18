@@ -5,7 +5,7 @@ import type {
   TMessage,
   TMessageReaction
 } from '@sharkord/shared';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { db } from '..';
 import { generateFileToken } from '../../helpers/files-crypto';
 import {
@@ -94,10 +94,17 @@ const getMessage = async (
     file: r.file
   }));
 
+  const replyCountRow = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(messages)
+    .where(eq(messages.parentMessageId, message.id))
+    .get();
+
   return {
     ...message,
     files: filesForMessage ?? [],
-    reactions: reactions ?? []
+    reactions: reactions ?? [],
+    threadReplyCount: Number(replyCountRow?.count || 0)
   };
 };
 

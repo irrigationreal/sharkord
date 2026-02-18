@@ -27,6 +27,10 @@ export type TMessagesMap = {
   [channelId: number]: TJoinedMessage[];
 };
 
+export type TThreadMessagesMap = {
+  [threadKey: string]: TJoinedMessage[];
+};
+
 export type TMessagesPagination = {
   cursor: number | null;
 };

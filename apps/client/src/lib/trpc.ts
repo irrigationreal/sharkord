@@ -3,10 +3,9 @@ import { resetDialogs } from '@/features/dialogs/actions';
 import { resetServerScreens } from '@/features/server-screens/actions';
 import { resetServerState, setDisconnectInfo } from '@/features/server/actions';
 import {
-  getSessionStorageItem,
-  removeSessionStorageItem,
-  SessionStorageKey
-} from '@/helpers/storage';
+  clearSessionStorage,
+  getValidSessionToken
+} from '@/helpers/auth-session';
 import type { AppRouter, TConnectionParams } from '@sharkord/shared';
 import { createTRPCProxyClient, createWSClient, wsLink } from '@trpc/client';
 
@@ -31,7 +30,7 @@ const initializeTRPC = (host: string) => {
     },
     connectionParams: async (): Promise<TConnectionParams> => {
       return {
-        token: getSessionStorageItem(SessionStorageKey.TOKEN) || ''
+        token: await getValidSessionToken()
       };
     }
   });
@@ -75,7 +74,7 @@ const cleanup = () => {
   resetDialogs();
   resetApp();
 
-  removeSessionStorageItem(SessionStorageKey.TOKEN);
+  clearSessionStorage();
 };
 
 export { cleanup, connectToTRPC, getTRPCClient, type AppRouter };

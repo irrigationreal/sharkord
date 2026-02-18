@@ -36,6 +36,8 @@ const createMockContextOptions = async (opts?: {
 const createMockContext = async (opts?: { customToken?: string }) => {
   const contextOpts = await createMockContextOptions(opts);
   const ctx = await createContext(contextOpts);
+  // Test callers bypass WS handshake/join flow; mark as authenticated explicitly.
+  ctx.authenticated = true;
 
   return ctx;
 };

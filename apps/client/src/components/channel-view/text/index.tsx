@@ -5,8 +5,14 @@ import {
   useChannelCan,
   useTypingUsersByChannelId
 } from '@/features/server/hooks';
-import { useMessages } from '@/features/server/messages/hooks';
+import {
+  isStrictE2EEEnabled,
+  sendStrictE2EEMessage
+} from '@/features/e2ee/shadow';
+import { useMessages, useThreadMessages } from '@/features/server/messages/hooks';
 import { useFlatPluginCommands } from '@/features/server/plugins/hooks';
+import { useOwnUserId } from '@/features/server/users/hooks';
+import { useUsers } from '@/features/server/users/hooks';
 import { playSound } from '@/features/server/sounds/actions';
 import { SoundType } from '@/features/server/types';
 import { getTrpcError } from '@/helpers/parse-trpc-errors';
@@ -15,13 +21,14 @@ import { getTRPCClient } from '@/lib/trpc';
 import {
   ChannelPermission,
   Permission,
+  type TJoinedMessage,
   TYPING_MS,
   isEmptyMessage
 } from '@sharkord/shared';
 import { filesize } from 'filesize';
 import { throttle } from 'lodash-es';
 import { Paperclip, Send } from 'lucide-react';
-import { memo, useCallback, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '../../ui/button';
 import { FileCard } from './file-card';
@@ -37,22 +44,34 @@ type TChannelProps = {
 const TextChannel = memo(({ channelId }: TChannelProps) => {
   const { messages, hasMore, loadMore, loading, fetching, groupedMessages } =
     useMessages(channelId);
+  const [threadRoot, setThreadRoot] = useState<TJoinedMessage | null>(null);
+  const threadRootMessageId = threadRoot?.id;
+  const {
+    messages: threadMessages,
+    hasMore: threadHasMore,
+    loadMore: loadMoreThread,
+    loading: threadLoading,
+    fetching: threadFetching,
+    reloadLatest: reloadThreadLatest
+  } = useThreadMessages(channelId, threadRootMessageId);
 
   const [newMessage, setNewMessage] = useState('');
   const allPluginCommands = useFlatPluginCommands();
   const typingUsers = useTypingUsersByChannelId(channelId);
 
   const { containerRef, onScroll } = useScrollController({
-    messages,
-    fetching,
-    hasMore,
-    loadMore,
+    messages: threadRoot ? threadMessages : messages,
+    fetching: threadRoot ? threadFetching : fetching,
+    hasMore: threadRoot ? threadHasMore : hasMore,
+    loadMore: threadRoot ? loadMoreThread : loadMore,
     hasTypingUsers: typingUsers.length > 0
   });
 
   // keep this ref just as a safeguard
   const sendingRef = useRef(false);
   const [sending, setSending] = useState(false);
+  const ownUserId = useOwnUserId();
+  const users = useUsers();
   const can = useCan();
   const channelCan = useChannelCan(channelId);
 
@@ -77,6 +96,10 @@ const TextChannel = memo(({ channelId }: TChannelProps) => {
     [can, allPluginCommands]
   );
 
+  useEffect(() => {
+    setThreadRoot(null);
+  }, [channelId]);
+
   const {
     files,
     removeFile,
@@ -85,7 +108,7 @@ const TextChannel = memo(({ channelId }: TChannelProps) => {
     uploadingSize,
     openFileDialog,
     fileInputProps
-  } = useUploadFiles(!canSendMessages);
+  } = useUploadFiles(!canSendMessages, channelId);
 
   const sendTypingSignal = useMemo(
     () =>
@@ -117,13 +140,38 @@ const TextChannel = memo(({ channelId }: TChannelProps) => {
     const trpc = getTRPCClient();
 
     try {
-      await trpc.messages.send.mutate({
-        content: newMessage,
-        channelId,
-        files: files.map((f) => f.id)
-      });
+      if (isStrictE2EEEnabled()) {
+        if (!ownUserId) {
+          toast.error('Unable to resolve own user for encrypted send');
+          return;
+        }
+
+        const result = await sendStrictE2EEMessage({
+          channelId,
+          userId: ownUserId,
+          content: newMessage,
+          tempFileIds: files.map((file) => file.id),
+          recipientUserIds: users.map((user) => user.id),
+          ...(threadRoot ? { parentMessageId: threadRoot.id } : {})
+        });
+
+        if (!result) {
+          toast.error('Encrypted send prerequisites are not ready');
+          return;
+        }
+      } else {
+        await trpc.messages.send.mutate({
+          content: newMessage,
+          channelId,
+          ...(threadRoot ? { parentMessageId: threadRoot.id } : {}),
+          files: files.map((f) => f.id)
+        });
+      }
 
       playSound(SoundType.MESSAGE_SENT);
+      if (threadRoot) {
+        void reloadThreadLatest();
+      }
     } catch (error) {
       toast.error(getTrpcError(error, 'Failed to send message'));
       return;
@@ -138,6 +186,10 @@ const TextChannel = memo(({ channelId }: TChannelProps) => {
     newMessage,
     channelId,
     files,
+    ownUserId,
+    users,
+    threadRoot,
+    reloadThreadLatest,
     clearFiles,
     sendTypingSignal,
     canSendMessages
@@ -158,13 +210,17 @@ const TextChannel = memo(({ channelId }: TChannelProps) => {
     [removeFile]
   );
 
-  if (!channelCan(ChannelPermission.VIEW_CHANNEL) || loading) {
+  if (
+    !channelCan(ChannelPermission.VIEW_CHANNEL) ||
+    loading ||
+    (threadRoot && threadLoading)
+  ) {
     return <TextSkeleton />;
   }
 
   return (
     <>
-      {fetching && (
+      {(threadRoot ? threadFetching : fetching) && (
         <div className="absolute top-0 left-0 right-0 h-12 z-10 flex items-center justify-center">
           <div className="flex items-center gap-2 bg-background/80 backdrop-blur-sm border border-border rounded-full px-4 py-2 shadow-lg">
             <Spinner size="xs" />
@@ -180,11 +236,44 @@ const TextChannel = memo(({ channelId }: TChannelProps) => {
         onScroll={onScroll}
         className="flex-1 overflow-y-auto overflow-x-hidden p-2 animate-in fade-in duration-500"
       >
-        <div className="space-y-4">
-          {groupedMessages.map((group, index) => (
-            <MessagesGroup key={index} group={group} />
-          ))}
-        </div>
+        {!threadRoot ? (
+          <div className="space-y-4">
+            {groupedMessages.map((group, index) => (
+              <MessagesGroup
+                key={index}
+                group={group}
+                onOpenThread={setThreadRoot}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <div className="sticky top-0 z-20 bg-background/95 backdrop-blur-sm border border-border rounded-md p-2 flex items-center justify-between">
+              <div className="text-sm font-medium">Thread</div>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setThreadRoot(null)}
+              >
+                Back to channel
+              </Button>
+            </div>
+            <div className="text-xs text-muted-foreground px-1">Original message</div>
+            <MessagesGroup group={[threadRoot]} />
+            <div className="text-xs text-muted-foreground px-1 pt-2">Replies</div>
+            {threadMessages.length === 0 ? (
+              <div className="text-sm text-muted-foreground px-1 py-2">
+                No replies yet. Start the thread.
+              </div>
+            ) : (
+              threadMessages.map((message) => (
+                <div key={message.id} className="pl-4 border-l border-border/70">
+                  <MessagesGroup group={[message]} />
+                </div>
+              ))
+            )}
+          </div>
+        )}
       </div>
 
       <div className="flex shrink-0 flex-col gap-2 border-t border-border p-2 pb-[calc(env(safe-area-inset-bottom)+0.5rem)]">
@@ -210,6 +299,11 @@ const TextChannel = memo(({ channelId }: TChannelProps) => {
           </div>
         )}
         <UsersTyping channelId={channelId} />
+        {threadRoot && (
+          <div className="text-xs text-muted-foreground px-1">
+            Replying in thread from message #{threadRoot.id}
+          </div>
+        )}
         <div className="flex items-center gap-2 rounded-lg">
           <TiptapInput
             value={newMessage}
@@ -236,7 +330,10 @@ const TextChannel = memo(({ channelId }: TChannelProps) => {
             className="h-8 w-8"
             onClick={onSendMessage}
             disabled={
-              uploading || sending || files.length === 0 || !canSendMessages
+              uploading ||
+              sending ||
+              (isEmptyMessage(newMessage) && files.length === 0) ||
+              !canSendMessages
             }
           >
             <Send className="h-4 w-4" />

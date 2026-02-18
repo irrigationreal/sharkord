@@ -1,26 +1,39 @@
-import { sha256 } from '@sharkord/shared';
 import { describe, expect, test } from 'bun:test';
 import { eq } from 'drizzle-orm';
-import jwt from 'jsonwebtoken';
 import { login } from '../../__tests__/helpers';
-import { TEST_SECRET_TOKEN } from '../../__tests__/seed';
-import { tdb } from '../../__tests__/setup';
+import { tdb, testsBaseUrl } from '../../__tests__/setup';
 import { invites, roles, settings, userRoles, users } from '../../db/schema';
 
 describe('/login', () => {
+  test('should not support legacy /auth/local/login route', async () => {
+    const response = await fetch(`${testsBaseUrl}/auth/local/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        identity: 'testowner',
+        password: 'password123'
+      })
+    });
+
+    expect(response.status).toBe(404);
+  });
+
   test('should successfully login with valid credentials', async () => {
     const response = await login('testowner', 'password123');
 
     expect(response.status).toBe(200);
 
-    const data = (await response.json()) as { success: boolean; token: string };
+    const data = (await response.json()) as {
+      success: boolean;
+      token: string;
+      refreshToken: string;
+    };
 
     expect(data).toHaveProperty('success', true);
     expect(data).toHaveProperty('token');
-
-    const decoded = jwt.verify(data.token, await sha256(TEST_SECRET_TOKEN));
-
-    expect(decoded).toHaveProperty('userId');
+    expect(data).toHaveProperty('refreshToken');
   });
 
   test('should fail login with invalid password', async () => {
@@ -207,22 +220,25 @@ describe('/login', () => {
     expect(data).toHaveProperty('errors');
   });
 
-  test('should return valid JWT token with userId claim', async () => {
+  test('should return valid access and refresh tokens', async () => {
     const response = await login('testowner', 'password123');
 
     expect(response.status).toBe(200);
 
-    const data: any = await response.json();
+    const data = (await response.json()) as {
+      success: boolean;
+      token: string;
+      refreshToken: string;
+    };
 
-    const decoded = jwt.verify(
-      data.token,
-      await sha256(TEST_SECRET_TOKEN)
-    ) as jwt.JwtPayload;
-
-    expect(decoded).toHaveProperty('userId');
-    expect(typeof decoded.userId).toBe('number');
-    expect(decoded).toHaveProperty('exp');
-    expect(decoded).toHaveProperty('iat');
+    expect(data).toHaveProperty('success', true);
+    expect(data).toHaveProperty('token');
+    expect(data).toHaveProperty('refreshToken');
+    expect(typeof data.token).toBe('string');
+    expect(typeof data.refreshToken).toBe('string');
+    expect(data.token.length).toBeGreaterThan(16);
+    expect(data.refreshToken.length).toBeGreaterThan(16);
+    expect(data.token).not.toBe(data.refreshToken);
   });
 
   test('should assign default role to newly registered user', async () => {

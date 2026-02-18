@@ -11,12 +11,11 @@ import {
   getLocalStorageItem,
   LocalStorageKey,
   removeLocalStorageItem,
-  SessionStorageKey,
-  setLocalStorageItem,
-  setSessionStorageItem
+  setLocalStorageItem
 } from '@/helpers/storage';
+import { setAuthSession } from '@/helpers/auth-session';
 import { useForm } from '@/hooks/use-form';
-import { memo, useCallback, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 const Connect = memo(() => {
@@ -26,7 +25,7 @@ const Connect = memo(() => {
     rememberCredentials: boolean;
   }>({
     identity: getLocalStorageItem(LocalStorageKey.IDENTITY) || '',
-    password: getLocalStorageItem(LocalStorageKey.USER_PASSWORD) || '',
+    password: '',
     rememberCredentials: !!getLocalStorageItem(
       LocalStorageKey.REMEMBER_CREDENTIALS
     )
@@ -41,6 +40,10 @@ const Connect = memo(() => {
     return invite || undefined;
   }, []);
 
+  useEffect(() => {
+    removeLocalStorageItem(LocalStorageKey.USER_PASSWORD);
+  }, []);
+
   const onRememberCredentialsChange = useCallback(
     (checked: boolean) => {
       onChange('rememberCredentials', checked);
@@ -49,6 +52,7 @@ const Connect = memo(() => {
         setLocalStorageItem(LocalStorageKey.REMEMBER_CREDENTIALS, 'true');
       } else {
         removeLocalStorageItem(LocalStorageKey.REMEMBER_CREDENTIALS);
+        removeLocalStorageItem(LocalStorageKey.USER_PASSWORD);
       }
     },
     [onChange]
@@ -78,13 +82,24 @@ const Connect = memo(() => {
         return;
       }
 
-      const data = (await response.json()) as { token: string };
+      const data = (await response.json()) as {
+        token: string;
+        refreshToken: string;
+        accessExpiresAt: number;
+        refreshExpiresAt: number;
+      };
 
-      setSessionStorageItem(SessionStorageKey.TOKEN, data.token);
+      setAuthSession({
+        token: data.token,
+        refreshToken: data.refreshToken,
+        accessExpiresAt: data.accessExpiresAt,
+        refreshExpiresAt: data.refreshExpiresAt
+      });
 
       if (values.rememberCredentials) {
         setLocalStorageItem(LocalStorageKey.IDENTITY, values.identity);
-        setLocalStorageItem(LocalStorageKey.USER_PASSWORD, values.password);
+      } else {
+        removeLocalStorageItem(LocalStorageKey.IDENTITY);
       }
 
       await connect();

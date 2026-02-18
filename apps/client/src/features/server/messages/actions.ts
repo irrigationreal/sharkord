@@ -50,8 +50,31 @@ export const addMessages = (
   }
 };
 
+export const addThreadMessages = (
+  channelId: number,
+  threadRootMessageId: number,
+  messages: TJoinedMessage[],
+  opts: { prepend?: boolean } = {}
+) => {
+  store.dispatch(
+    serverSliceActions.addThreadMessages({
+      channelId,
+      threadRootMessageId,
+      messages,
+      opts
+    })
+  );
+};
+
 export const updateMessage = (channelId: number, message: TJoinedMessage) => {
   store.dispatch(serverSliceActions.updateMessage({ channelId, message }));
+};
+
+export const upsertThreadMessage = (
+  channelId: number,
+  message: TJoinedMessage
+) => {
+  store.dispatch(serverSliceActions.upsertThreadMessage({ channelId, message }));
 };
 
 export const deleteMessage = (channelId: number, messageId: number) => {

@@ -18,7 +18,11 @@ import type {
   TVoiceMap,
   TVoiceUserState
 } from '@sharkord/shared';
-import type { TDisconnectInfo, TMessagesMap } from './types';
+import type {
+  TDisconnectInfo,
+  TMessagesMap,
+  TThreadMessagesMap
+} from './types';
 
 export interface IServerState {
   connected: boolean;
@@ -32,6 +36,7 @@ export interface IServerState {
   selectedChannelId: number | undefined;
   currentVoiceChannelId: number | undefined;
   messagesMap: TMessagesMap;
+  threadMessagesMap: TThreadMessagesMap;
   users: TJoinedPublicUser[];
   roles: TJoinedRole[];
   publicSettings: TPublicServerSettings | undefined;
@@ -63,6 +68,7 @@ const initialState: IServerState = {
   selectedChannelId: undefined,
   currentVoiceChannelId: undefined,
   messagesMap: {},
+  threadMessagesMap: {},
   users: [],
   roles: [],
   publicSettings: undefined,
@@ -173,6 +179,29 @@ export const serverSlice = createSlice({
         (a, b) => a.createdAt - b.createdAt
       );
     },
+    addThreadMessages: (
+      state,
+      action: PayloadAction<{
+        channelId: number;
+        threadRootMessageId: number;
+        messages: TJoinedMessage[];
+        opts?: { prepend?: boolean };
+      }>
+    ) => {
+      const { channelId, threadRootMessageId, messages, opts } = action.payload;
+      const threadKey = `${channelId}:${threadRootMessageId}`;
+      const existing = state.threadMessagesMap[threadKey] ?? [];
+      const existingIds = new Set(existing.map((m) => m.id));
+      const filtered = messages.filter((m) => !existingIds.has(m.id));
+
+      const merged = opts?.prepend
+        ? [...filtered, ...existing]
+        : [...existing, ...filtered];
+
+      state.threadMessagesMap[threadKey] = merged.sort(
+        (a, b) => a.createdAt - b.createdAt
+      );
+    },
     updateMessage: (
       state,
       action: PayloadAction<{ channelId: number; message: TJoinedMessage }>
@@ -188,6 +217,45 @@ export const serverSlice = createSlice({
       if (messageIndex === -1) return;
 
       messages[messageIndex] = action.payload.message;
+
+      const threadRootMessageId = action.payload.message.parentMessageId;
+
+      if (typeof threadRootMessageId === 'number') {
+        const threadKey = `${action.payload.channelId}:${threadRootMessageId}`;
+        const threadMessages = state.threadMessagesMap[threadKey];
+
+        if (threadMessages) {
+          const threadIndex = threadMessages.findIndex(
+            (message) => message.id === action.payload.message.id
+          );
+
+          if (threadIndex !== -1) {
+            threadMessages[threadIndex] = action.payload.message;
+          }
+        }
+      }
+    },
+    upsertThreadMessage: (
+      state,
+      action: PayloadAction<{ channelId: number; message: TJoinedMessage }>
+    ) => {
+      const threadRootMessageId = action.payload.message.parentMessageId;
+
+      if (typeof threadRootMessageId !== 'number') return;
+
+      const threadKey = `${action.payload.channelId}:${threadRootMessageId}`;
+      const existing = state.threadMessagesMap[threadKey] ?? [];
+      const index = existing.findIndex((m) => m.id === action.payload.message.id);
+
+      if (index === -1) {
+        existing.push(action.payload.message);
+      } else {
+        existing[index] = action.payload.message;
+      }
+
+      state.threadMessagesMap[threadKey] = existing.sort(
+        (a, b) => a.createdAt - b.createdAt
+      );
     },
     deleteMessage: (
       state,
@@ -200,6 +268,14 @@ export const serverSlice = createSlice({
       state.messagesMap[action.payload.channelId] = messages.filter(
         (m) => m.id !== action.payload.messageId
       );
+
+      for (const threadKey of Object.keys(state.threadMessagesMap)) {
+        if (!threadKey.startsWith(`${action.payload.channelId}:`)) continue;
+
+        state.threadMessagesMap[threadKey] = state.threadMessagesMap[
+          threadKey
+        ]!.filter((m) => m.id !== action.payload.messageId);
+      }
     },
     clearTypingUsers: (state, action: PayloadAction<number>) => {
       delete state.typingMap[action.payload];
