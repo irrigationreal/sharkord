@@ -1,6 +1,6 @@
 import { ed25519, x25519 } from '@noble/curves/ed25519.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import type { TFile, TJoinedMessage } from '@sharkord/shared';
+import type { TE2EEAuthorizedDevice, TFile, TJoinedMessage } from '@sharkord/shared';
 import { decode, encode } from 'cborg';
 import { getFileUrl } from '@/helpers/get-file-url';
 import {
@@ -74,7 +74,10 @@ const E2EE_DECRYPTED_CACHE = new Map<string, string>();
 const E2EE_TEMP_FILE_META = new Map<string, TEncryptedFileMeta>();
 const E2EE_TEMP_FILE_SHA256 = new Map<string, string>();
 const E2EE_FILE_META_BY_MESSAGE = new Map<number, Map<number, TEncryptedFileMeta>>();
+const E2EE_RESHARE_COOLDOWN_BY_CHANNEL = new Map<number, number>();
+const E2EE_RESHARE_IN_FLIGHT = new Map<number, Promise<boolean>>();
 const E2EE_MARKER_RE = /^\[\[e2ee:v1:([0-9a-fA-F-]{36})\]\]$/;
+const E2EE_RESHARE_COOLDOWN_MS = 60_000;
 
 const toBase64 = (value: Uint8Array): string =>
   btoa(String.fromCharCode(...value));
@@ -102,6 +105,20 @@ const fromHex = (value: string): Uint8Array => {
 
 const toHex = (value: Uint8Array): string =>
   Array.from(value, (byte) => byte.toString(16).padStart(2, '0')).join('');
+
+const equalBytes = (left: Uint8Array, right: Uint8Array): boolean => {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  for (let i = 0; i < left.length; i += 1) {
+    if (left[i] !== right[i]) {
+      return false;
+    }
+  }
+
+  return true;
+};
 
 const encodeCanonical = (value: unknown): Uint8Array => encode(value);
 const POLICY_DIGEST_V1 = sha256(
@@ -472,29 +489,75 @@ const ensureCscExists = async (
   }
 };
 
+const extractMembershipDigestFromCscPayload = (
+  payloadCborB64: string | null
+): Uint8Array | null => {
+  if (!payloadCborB64) {
+    return null;
+  }
+
+  try {
+    const decoded = decode(fromBase64(payloadCborB64), { useMaps: true });
+
+    if (!(decoded instanceof Map)) {
+      return null;
+    }
+
+    const digest = decoded.get(4);
+    return digest instanceof Uint8Array ? digest : null;
+  } catch {
+    return null;
+  }
+};
+
 const publishEpochWithDeviceKeyEnvelopes = async ({
   channelId,
   identity,
-  recipientUserIds
+  recipientUserIds,
+  channelKeyMaterial,
+  preloadedRecipientDevices,
+  skipIfMembershipDigestMatches
 }: {
   channelId: number;
   identity: TLocalIdentity;
   recipientUserIds: number[];
+  channelKeyMaterial?: Uint8Array;
+  preloadedRecipientDevices?: TE2EEAuthorizedDevice[];
+  skipIfMembershipDigestMatches?: boolean;
 }): Promise<{ epoch: number; cscHashHex: string } | null> => {
   const latest = await getLatestE2EEChannelState(channelId);
   const currentEpoch = latest.latestEpoch || 0;
   const nextEpoch = currentEpoch + 1;
-  const channelKey = getOrCreateChannelKeyMaterial(channelId);
-  const recipientDevices = (
-    await Promise.all(
-      recipientUserIds.map((userId) => getAuthorizedE2EEDevices(userId))
-    )
-  ).flat();
+  const channelKey = channelKeyMaterial || getOrCreateChannelKeyMaterial(channelId);
+  const recipientDevices =
+    preloadedRecipientDevices ||
+    (
+      await Promise.all(
+        recipientUserIds.map((userId) => getAuthorizedE2EEDevices(userId))
+      )
+    ).flat();
 
   const now = Date.now();
   const membershipDigest = computeMembershipDigest(
     recipientDevices.map((device) => device.deviceId)
   );
+  const latestMembershipDigest = extractMembershipDigestFromCscPayload(
+    latest.latestCscPayloadCborB64
+  );
+
+  if (
+    skipIfMembershipDigestMatches &&
+    latest.latestEpoch &&
+    latest.latestCscHashHex &&
+    latestMembershipDigest &&
+    equalBytes(latestMembershipDigest, membershipDigest)
+  ) {
+    return {
+      epoch: latest.latestEpoch,
+      cscHashHex: latest.latestCscHashHex
+    };
+  }
+
   const payload = new Map<number, unknown>([
     [0, 1],
     [1, channelId],
@@ -1009,6 +1072,87 @@ const sendStrictE2EEMessage = async ({
   return { messageId: created.messageId };
 };
 
+const republishKnownChannelKeysForMembers = async ({
+  ownUserId,
+  recipientUserIds,
+  channelIds
+}: {
+  ownUserId: number;
+  recipientUserIds: number[];
+  channelIds: number[];
+}): Promise<void> => {
+  if (!channelIds.length || !recipientUserIds.length) {
+    return;
+  }
+
+  const knownChannelIds = channelIds.filter((channelId) =>
+    Boolean(getChannelKeyMaterial(channelId))
+  );
+
+  if (!knownChannelIds.length) {
+    return;
+  }
+
+  const identity = await ensureRegisteredIdentity(ownUserId);
+
+  if (!identity) {
+    return;
+  }
+
+  const uniqueRecipients = Array.from(new Set([ownUserId, ...recipientUserIds]));
+  const recipientDevices = (
+    await Promise.all(
+      uniqueRecipients.map((userId) => getAuthorizedE2EEDevices(userId))
+    )
+  ).flat();
+  const now = Date.now();
+
+  await Promise.allSettled(
+    knownChannelIds.map(async (channelId) => {
+      const knownChannelKey = getChannelKeyMaterial(channelId);
+
+      if (!knownChannelKey) {
+        return;
+      }
+
+      const lastRepublishAt = E2EE_RESHARE_COOLDOWN_BY_CHANNEL.get(channelId) || 0;
+
+      if (now - lastRepublishAt < E2EE_RESHARE_COOLDOWN_MS) {
+        return;
+      }
+
+      const existingInFlight = E2EE_RESHARE_IN_FLIGHT.get(channelId);
+
+      if (existingInFlight) {
+        await existingInFlight;
+        return;
+      }
+
+      const task = (async () => {
+        try {
+          await publishEpochWithDeviceKeyEnvelopes({
+            channelId,
+            identity,
+            recipientUserIds: uniqueRecipients,
+            channelKeyMaterial: knownChannelKey,
+            preloadedRecipientDevices: recipientDevices,
+            skipIfMembershipDigestMatches: true
+          });
+          E2EE_RESHARE_COOLDOWN_BY_CHANNEL.set(channelId, Date.now());
+          return true;
+        } catch {
+          return false;
+        } finally {
+          E2EE_RESHARE_IN_FLIGHT.delete(channelId);
+        }
+      })();
+
+      E2EE_RESHARE_IN_FLIGHT.set(channelId, task);
+      await task;
+    })
+  );
+};
+
 const tryHydrateMessagesWithEnvelopeDecrypt = async (
   channelId: number,
   messages: TJoinedMessage[],
@@ -1158,6 +1302,7 @@ export {
   prepareStrictE2EEFileForUpload,
   registerStrictTempFileEnvelope,
   removeStrictTempFileEnvelope,
+  republishKnownChannelKeysForMembers,
   sendStrictE2EEMessage,
   tryHydrateMessagesWithEnvelopeDecrypt
 };
