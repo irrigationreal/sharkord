@@ -78,6 +78,16 @@ check_must_match "enforceE2EEMessageBody|isE2EEMessageMarker" \
   "apps/server/src/routers/messages/get-messages.ts apps/server/src/db/queries/messages.ts apps/server/src/e2ee/message-content.ts" \
   "Server must enforce E2EE-only message content on message read/publish paths."
 
+# Public file serving for E2EE message attachments must stay opaque.
+check_must_match "isE2EEMessageMarker|encrypted\\.bin|application/octet-stream" \
+  "apps/server/src/http/public.ts" \
+  "Public file route must serve E2EE message attachments with opaque headers."
+
+# Message metadata scraping must not be reintroduced into runtime message flow.
+check_no_matches "enqueueProcessMetadata\\(" \
+  "apps/server/src --glob '!**/__tests__/**' --glob '!queues/message-metadata/**'" \
+  "Runtime must not enqueue plaintext message metadata scraping."
+
 if [[ "$has_error" -ne 0 ]]; then
   exit 1
 fi

@@ -6,6 +6,7 @@ import { db } from '../db';
 import { isFileOrphaned } from '../db/queries/files';
 import { getMessageByFileId } from '../db/queries/messages';
 import { channels, files } from '../db/schema';
+import { isE2EEMessageMarker } from '../e2ee/message-content';
 import { verifyFileToken } from '../helpers/files-crypto';
 import { PUBLIC_PATH } from '../helpers/paths';
 import { logger } from '../logger';
@@ -80,6 +81,9 @@ const publicRouteHandler = async (
   }
 
   const fileStream = fs.createReadStream(filePath);
+  const isE2EEMessageFile = Boolean(
+    associatedMessage && isE2EEMessageMarker(associatedMessage.content)
+  );
 
   const inlineAllowlist = [
     'image/png',
@@ -91,14 +95,20 @@ const publicRouteHandler = async (
     'audio/mpeg'
   ];
 
-  const contentDisposition = inlineAllowlist.includes(dbFile.mimeType)
+  const responseMimeType = isE2EEMessageFile
+    ? 'application/octet-stream'
+    : dbFile.mimeType;
+  const responseFileName = isE2EEMessageFile
+    ? 'encrypted.bin'
+    : dbFile.originalName;
+  const contentDisposition = inlineAllowlist.includes(responseMimeType)
     ? 'inline'
     : 'attachment';
 
   res.writeHead(200, {
-    'Content-Type': dbFile.mimeType,
+    'Content-Type': responseMimeType,
     'Content-Length': dbFile.size,
-    'Content-Disposition': `${contentDisposition}; filename="${dbFile.originalName}"`
+    'Content-Disposition': `${contentDisposition}; filename="${responseFileName}"`
   });
 
   fileStream.pipe(res);
