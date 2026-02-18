@@ -58,6 +58,9 @@ check_no_matches "getFileUrl\\(file\\)|href=\\{.*getFileUrl\\(file\\)" \
 check_must_match "Blocked non-E2EE message" \
   "apps/client/src/features/e2ee/shadow.ts" \
   "Expected non-E2EE message redaction is missing."
+check_no_matches "html:\\s*plaintext|legacy plain payload" \
+  "apps/client/src/features/e2ee/shadow.ts" \
+  "Client E2EE parser must not fall back to plaintext payload rendering."
 
 # Attachment ciphertext hashes must be signed in header and verified server-side.
 check_must_match "attachmentCiphertextSha256" \
@@ -69,6 +72,11 @@ check_must_match "createHash\\('sha256'\\)" \
 check_must_match "verifyEncryptedAttachmentBinding" \
   "apps/server/src/services/e2ee.ts" \
   "Attachment hash binding verification is not wired in sendEncryptedMessage."
+
+# Server-side read/publish paths must enforce E2EE-only message bodies/files.
+check_must_match "enforceE2EEMessageBody|isE2EEMessageMarker" \
+  "apps/server/src/routers/messages/get-messages.ts apps/server/src/db/queries/messages.ts apps/server/src/e2ee/message-content.ts" \
+  "Server must enforce E2EE-only message content on message read/publish paths."
 
 if [[ "$has_error" -ne 0 ]]; then
   exit 1

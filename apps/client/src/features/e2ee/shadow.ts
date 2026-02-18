@@ -729,13 +729,11 @@ const parseE2EEPayload = (plaintext: string): TE2EEMessagePayload => {
           : []
       };
     }
-  } catch {
-    // legacy plain payload
-  }
+  } catch {}
 
   return {
     v: 1,
-    html: plaintext,
+    html: '<p><em>Unsupported encrypted payload</em></p>',
     files: []
   };
 };

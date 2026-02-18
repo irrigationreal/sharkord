@@ -19,6 +19,10 @@ import {
   messageReactions,
   messages
 } from '../../db/schema';
+import {
+  enforceE2EEMessageBody,
+  isE2EEMessageMarker,
+} from '../../e2ee/message-content';
 import { generateFileToken } from '../../helpers/files-crypto';
 import { invariant } from '../../utils/invariant';
 import { pubsub } from '../../utils/pubsub';
@@ -204,12 +208,17 @@ const getMessagesRoute = protectedProcedure
     );
 
     // Combine messages with files and reactions
-    const messagesWithFiles: TJoinedMessage[] = rows.map((msg) => ({
-      ...msg,
-      files: filesByMessage[msg.id] ?? [],
-      reactions: reactionsByMessage[msg.id] ?? [],
-      threadReplyCount: replyCountByMessage[msg.id] ?? 0
-    }));
+    const messagesWithFiles: TJoinedMessage[] = rows.map((msg) => {
+      const isE2EE = isE2EEMessageMarker(msg.content);
+
+      return {
+        ...msg,
+        content: enforceE2EEMessageBody(msg.content),
+        files: isE2EE ? (filesByMessage[msg.id] ?? []) : [],
+        reactions: reactionsByMessage[msg.id] ?? [],
+        threadReplyCount: replyCountByMessage[msg.id] ?? 0
+      };
+    });
 
     // always update read state to the absolute latest message in the channel
     // (not just the newest in this batch, in case user is scrolling back through history)

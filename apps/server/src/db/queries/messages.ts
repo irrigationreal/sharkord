@@ -7,6 +7,10 @@ import type {
 } from '@sharkord/shared';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { db } from '..';
+import {
+  enforceE2EEMessageBody,
+  isE2EEMessageMarker,
+} from '../../e2ee/message-content';
 import { generateFileToken } from '../../helpers/files-crypto';
 import {
   channels,
@@ -99,10 +103,12 @@ const getMessage = async (
     .from(messages)
     .where(eq(messages.parentMessageId, message.id))
     .get();
+  const isE2EE = isE2EEMessageMarker(message.content);
 
   return {
     ...message,
-    files: filesForMessage ?? [],
+    content: enforceE2EEMessageBody(message.content),
+    files: isE2EE ? (filesForMessage ?? []) : [],
     reactions: reactions ?? [],
     threadReplyCount: Number(replyCountRow?.count || 0)
   };
