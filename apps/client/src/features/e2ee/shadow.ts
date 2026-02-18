@@ -67,7 +67,6 @@ type TPreparedEnvelope = {
   clientMessageId: string;
 };
 
-const E2EE_STRICT_KEY = 'sharkord.e2ee.strict.v1.enabled';
 const E2EE_IDENTITY_PREFIX = 'sharkord.e2ee.shadow.identity.v1.';
 const E2EE_CHANNEL_KEY_PREFIX = 'sharkord.e2ee.shadow.channel-key.v1.';
 const E2EE_COUNTER_RESERVATIONS = new Map<string, TCounterReservation>();
@@ -111,8 +110,7 @@ const POLICY_DIGEST_V1 = sha256(
 const computeMembershipDigest = (deviceIds: string[]): Uint8Array =>
   sha256(new TextEncoder().encode([...deviceIds].sort().join(',')));
 
-const isStrictE2EEEnabled = (): boolean =>
-  localStorage.getItem(E2EE_STRICT_KEY) !== '0';
+const isStrictE2EEEnabled = (): boolean => true;
 
 const getIdentityStorageKey = (userId: number): string =>
   `${E2EE_IDENTITY_PREFIX}${userId}`;
@@ -882,7 +880,6 @@ const sendStrictE2EEMessage = async ({
   parentMessageId?: number;
   recipientUserIds: number[];
 }): Promise<{ messageId: number } | null> => {
-  if (!isStrictE2EEEnabled()) return null;
   if (!content.trim() && !(tempFileIds && tempFileIds.length > 0)) return null;
 
   const identity = await ensureRegisteredIdentity(userId);

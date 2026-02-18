@@ -6,7 +6,6 @@ import {
   useTypingUsersByChannelId
 } from '@/features/server/hooks';
 import {
-  isStrictE2EEEnabled,
   sendStrictE2EEMessage
 } from '@/features/e2ee/shadow';
 import { useMessages, useThreadMessages } from '@/features/server/messages/hooks';
@@ -137,35 +136,24 @@ const TextChannel = memo(({ channelId }: TChannelProps) => {
     sendingRef.current = true;
     sendTypingSignal.cancel();
 
-    const trpc = getTRPCClient();
-
     try {
-      if (isStrictE2EEEnabled()) {
-        if (!ownUserId) {
-          toast.error('Unable to resolve own user for encrypted send');
-          return;
-        }
+      if (!ownUserId) {
+        toast.error('Unable to resolve own user for encrypted send');
+        return;
+      }
 
-        const result = await sendStrictE2EEMessage({
-          channelId,
-          userId: ownUserId,
-          content: newMessage,
-          tempFileIds: files.map((file) => file.id),
-          recipientUserIds: users.map((user) => user.id),
-          ...(threadRoot ? { parentMessageId: threadRoot.id } : {})
-        });
+      const result = await sendStrictE2EEMessage({
+        channelId,
+        userId: ownUserId,
+        content: newMessage,
+        tempFileIds: files.map((file) => file.id),
+        recipientUserIds: users.map((user) => user.id),
+        ...(threadRoot ? { parentMessageId: threadRoot.id } : {})
+      });
 
-        if (!result) {
-          toast.error('Encrypted send prerequisites are not ready');
-          return;
-        }
-      } else {
-        await trpc.messages.send.mutate({
-          content: newMessage,
-          channelId,
-          ...(threadRoot ? { parentMessageId: threadRoot.id } : {}),
-          files: files.map((f) => f.id)
-        });
+      if (!result) {
+        toast.error('Encrypted send prerequisites are not ready');
+        return;
       }
 
       playSound(SoundType.MESSAGE_SENT);

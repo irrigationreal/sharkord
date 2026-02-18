@@ -1,11 +1,10 @@
 import {
-  isStrictE2EEEnabled,
   prepareStrictE2EEFileForUpload,
   registerStrictTempFileEnvelope,
   removeStrictTempFileEnvelope
 } from '@/features/e2ee/shadow';
 import { useCan, usePublicServerSettings } from '@/features/server/hooks';
-import { uploadFile, uploadFiles } from '@/helpers/upload-file';
+import { uploadFile } from '@/helpers/upload-file';
 import { Permission, type TTempFile } from '@sharkord/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -41,8 +40,9 @@ const useUploadFiles = (disabled: boolean = false, channelId?: number) => {
 
   const uploadWithCurrentMode = useCallback(
     async (filesToUpload: File[]): Promise<TTempFile[]> => {
-      if (!isStrictE2EEEnabled() || !channelId) {
-        return uploadFiles(filesToUpload);
+      if (!channelId) {
+        toast.error('E2EE uploads require a channel context');
+        return [];
       }
 
       const uploadedFiles: TTempFile[] = [];
