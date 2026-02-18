@@ -1,5 +1,10 @@
-import { ChannelPermission, Permission } from '@sharkord/shared';
-import { useCallback } from 'react';
+import { sendStrictE2EEMessage } from '@/features/e2ee/shadow';
+import {
+  ChannelPermission,
+  Permission,
+  type TPluginSlotContext
+} from '@sharkord/shared';
+import { useCallback, useMemo } from 'react';
 import { useSelector } from 'react-redux';
 import type { IRootState } from '../store';
 import { useChannelById, useChannelPermissionsById } from './channels/hooks';
@@ -12,6 +17,7 @@ import {
   isOwnUserOwnerSelector,
   ownUserRolesSelector,
   ownVoiceUserSelector,
+  pluginComponentContextSelector,
   pluginsEnabledSelector,
   publicServerSettingsSelector,
   serverNameSelector,
@@ -19,6 +25,7 @@ import {
   userRolesSelector,
   voiceUsersByChannelIdSelector
 } from './selectors';
+import { ownUserIdSelector } from './users/selectors';
 
 export const useIsConnected = () => useSelector(connectedSelector);
 
@@ -108,3 +115,32 @@ export const useUnreadMessagesCount = (channelId: number) =>
   useSelector((state: IRootState) =>
     channelReadStateByIdSelector(state, channelId)
   );
+
+export const usePluginComponentContext = (): TPluginSlotContext => {
+  const stateCtx = useSelector(pluginComponentContextSelector);
+  const ownUserId = useSelector(ownUserIdSelector);
+
+  return useMemo<TPluginSlotContext>(
+    () => ({
+      ...stateCtx,
+      sendMessage: async (channelId: number, content: string) => {
+        if (!ownUserId) {
+          throw new Error('Unable to resolve own user for encrypted send');
+        }
+
+        const result = await sendStrictE2EEMessage({
+          channelId,
+          userId: ownUserId,
+          content: `<p>${content}</p>`,
+          tempFileIds: [],
+          recipientUserIds: stateCtx.users.map((user) => user.id)
+        });
+
+        if (!result) {
+          throw new Error('Encrypted send prerequisites are not ready');
+        }
+      }
+    }),
+    [stateCtx, ownUserId]
+  );
+};

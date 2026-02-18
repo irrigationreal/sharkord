@@ -2,11 +2,11 @@ import { EmojiPicker } from '@/components/emoji-picker';
 import { useRecentEmojis } from '@/components/emoji-picker/use-recent-emojis';
 import { Protect } from '@/components/protect';
 import type { TEmojiItem } from '@/components/tiptap-input/types';
-import { IconButton } from '@/components/ui/icon-button';
 import { requestConfirmation } from '@/features/dialogs/actions';
 import { getTRPCClient } from '@/lib/trpc';
 import { Permission } from '@sharkord/shared';
 import { MessageSquareReply, Pencil, Smile, Trash } from 'lucide-react';
+import { IconButton } from '@sharkord/ui';
 import { memo, useCallback, useMemo } from 'react';
 import { toast } from 'sonner';
 

@@ -12,6 +12,8 @@ import type {
   TJoinedMessage,
   TJoinedPublicUser,
   TJoinedRole,
+  TPluginComponentsMap,
+  TPluginComponentsMapBySlotId,
   TPublicServerSettings,
   TReadStateMap,
   TServerInfo,
@@ -54,6 +56,7 @@ export interface IServerState {
     [channelId: number]: number | undefined;
   };
   pluginCommands: TCommandsMapByPlugin;
+  pluginComponents: TPluginComponentsMap;
 }
 
 const initialState: IServerState = {
@@ -86,7 +89,8 @@ const initialState: IServerState = {
   pinnedCard: undefined,
   channelPermissions: {},
   readStatesMap: {},
-  pluginCommands: {}
+  pluginCommands: {},
+  pluginComponents: {}
 };
 
 export const serverSlice = createSlice({
@@ -712,6 +716,30 @@ export const serverSlice = createSlice({
           (c) => c.name !== commandName
         );
       }
+    },
+    addPluginComponents: (
+      state,
+      action: PayloadAction<{
+        pluginId: string;
+        slots: TPluginComponentsMapBySlotId;
+      }>
+    ) => {
+      const { pluginId, slots } = action.payload;
+
+      if (!state.pluginComponents[pluginId]) {
+        state.pluginComponents[pluginId] = {};
+      }
+
+      state.pluginComponents[pluginId] = {
+        ...state.pluginComponents[pluginId],
+        ...slots
+      };
+    },
+    setPluginComponents: (
+      state,
+      action: PayloadAction<TPluginComponentsMap>
+    ) => {
+      state.pluginComponents = action.payload;
     }
   }
 });

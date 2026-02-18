@@ -9,23 +9,101 @@ import {
   getClientRateLimitKey,
   getRateLimitRetrySeconds
 } from '../utils/rate-limiters/rate-limiter';
+import { discordCallbackRouteHandler } from './auth/discord-callback';
+import { discordStartRouteHandler } from './auth/discord-start';
+import { authLogoutRouteHandler } from './auth/logout';
 import { healthRouteHandler } from './healthz';
+import {
+  getRequestPathname,
+  hasPrefixPathSegment,
+  type HttpRouteHandler
+} from './helpers';
 import { infoRouteHandler } from './info';
 import { interfaceRouteHandler } from './interface';
 import { loginRouteHandler } from './login';
-import { sessionRefreshRouteHandler } from './session-refresh';
+import { pluginBundleRouteHandler } from './plugin-bundle';
+import { pluginsComponentsRouteHandler } from './plugins-components';
 import { publicRouteHandler } from './public';
+import { sessionRefreshRouteHandler } from './session-refresh';
 import { uploadFileRouteHandler } from './upload';
-import { authLogoutRouteHandler } from './auth/logout';
-import { discordCallbackRouteHandler } from './auth/discord-callback';
-import { discordStartRouteHandler } from './auth/discord-start';
 import { HttpValidationError } from './utils';
 
-// 5 attempts per minute per IP for login route
+type RouteContext = {
+  info: ReturnType<typeof getWsInfo>;
+};
+
+type SupportedMethod = 'GET' | 'POST';
+
 const loginRateLimiter = createRateLimiter({
   maxRequests: config.rateLimiters.joinServer.maxRequests,
   windowMs: config.rateLimiters.joinServer.windowMs
 });
+
+const handleLoginRequest = async (
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  info: ReturnType<typeof getWsInfo>
+) => {
+  if (info?.ip) {
+    const key = getClientRateLimitKey(info.ip);
+    const rateLimit = loginRateLimiter.consume(key);
+
+    if (!rateLimit.allowed) {
+      logger.debug(
+        `${chalk.dim('[Rate Limiter HTTP]')} /login rate limited for key "${key}"`
+      );
+
+      res.setHeader('Retry-After', getRateLimitRetrySeconds(rateLimit.retryAfterMs));
+      res.writeHead(429, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          error: 'Too many login attempts. Please try again shortly.'
+        })
+      );
+
+      return;
+    }
+  } else {
+    logger.warn(
+      `${chalk.dim('[Rate Limiter HTTP]')} Missing IP address in request info, skipping rate limiting for login route.`
+    );
+  }
+
+  await loginRouteHandler(req, res);
+};
+
+const routeHandlers: Partial<
+  Record<
+    SupportedMethod,
+    {
+      exact: Record<string, HttpRouteHandler<RouteContext>>;
+      prefix: Record<string, HttpRouteHandler<RouteContext>>;
+    }
+  >
+> = {
+  GET: {
+    exact: {
+      '/healthz': (req, res) => healthRouteHandler(req, res),
+      '/info': (req, res) => infoRouteHandler(req, res)
+    },
+    prefix: {
+      '/public': (req, res) => publicRouteHandler(req, res),
+      '/plugin-components': (req, res) => pluginsComponentsRouteHandler(req, res),
+      '/plugin-bundle': (req, res) => pluginBundleRouteHandler(req, res),
+      '/auth/discord/start': (req, res) => discordStartRouteHandler(req, res),
+      '/auth/discord/callback': (req, res) => discordCallbackRouteHandler(req, res)
+    }
+  },
+  POST: {
+    exact: {
+      '/upload': (req, res) => uploadFileRouteHandler(req, res),
+      '/login': (req, res, ctx) => handleLoginRequest(req, res, ctx.info),
+      '/auth/session/refresh': (req, res) => sessionRefreshRouteHandler(req, res),
+      '/auth/logout': (req, res) => authLogoutRouteHandler(req, res)
+    },
+    prefix: {}
+  }
+};
 
 const parseAllowedOrigins = (rawValue: string): string[] => {
   const normalized = rawValue.trim();
@@ -39,9 +117,7 @@ const parseAllowedOrigins = (rawValue: string): string[] => {
       return parsed
         .map((item) => String(item).trim())
         .filter(Boolean)
-        .map((item) =>
-          item.toLowerCase().replace(/\/+$/, '')
-        );
+        .map((item) => item.toLowerCase().replace(/\/+$/, ''));
     }
   } catch {
     // fall through to csv parsing
@@ -118,7 +194,10 @@ const sendSecurityHeaders = (
     'Access-Control-Allow-Headers',
     'content-type, origin, sec-fetch-mode, x-file-name, x-file-type, content-length, x-token'
   );
-  res.setHeader('Content-Security-Policy', "default-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+  );
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('X-Content-Type-Options', 'nosniff');
 
@@ -140,9 +219,7 @@ const createHttpServer = async (port: number = config.server.port) => {
 
         const info = getWsInfo(undefined, req);
 
-        logger.debug(
-          `${chalk.dim('[HTTP]')} ${req.method} ${req.url} - ${info?.ip}`
-        );
+        logger.debug(`${chalk.dim('[HTTP]')} ${req.method} ${req.url} - ${info?.ip}`);
 
         if (req.method === 'OPTIONS') {
           res.writeHead(204);
@@ -150,85 +227,38 @@ const createHttpServer = async (port: number = config.server.port) => {
           return;
         }
 
+        const pathname = getRequestPathname(req);
+
+        if (!pathname) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Bad request' }));
+          return;
+        }
+
         try {
-          if (req.method === 'GET' && req.url === '/healthz') {
-            return await healthRouteHandler(req, res);
-          }
+          const method = req.method as SupportedMethod | undefined;
 
-          if (
-            req.method === 'GET' &&
-            req.url?.startsWith('/auth/discord/start')
-          ) {
-            return await discordStartRouteHandler(req, res);
-          }
+          if (method) {
+            const methodHandlers = routeHandlers[method];
 
-          if (
-            req.method === 'GET' &&
-            req.url?.startsWith('/auth/discord/callback')
-          ) {
-            return await discordCallbackRouteHandler(req, res);
-          }
+            if (methodHandlers) {
+              const exactHandler = methodHandlers.exact[pathname];
 
-          if (req.method === 'GET' && req.url === '/info') {
-            return await infoRouteHandler(req, res);
-          }
-
-          if (req.method === 'POST' && req.url === '/upload') {
-            return await uploadFileRouteHandler(req, res);
-          }
-
-          const handleLoginRequest = async () => {
-            if (info?.ip) {
-              const key = getClientRateLimitKey(info.ip);
-              const rateLimit = loginRateLimiter.consume(key);
-
-              if (!rateLimit.allowed) {
-                logger.debug(
-                  `${chalk.dim('[Rate Limiter HTTP]')} /login rate limited for key "${key}"`
-                );
-
-                res.setHeader(
-                  'Retry-After',
-                  getRateLimitRetrySeconds(rateLimit.retryAfterMs)
-                );
-
-                res.writeHead(429, { 'Content-Type': 'application/json' });
-
-                res.end(
-                  JSON.stringify({
-                    error: 'Too many login attempts. Please try again shortly.'
-                  })
-                );
-
-                return;
+              if (exactHandler) {
+                return await exactHandler(req, res, { info });
               }
-            } else {
-              logger.warn(
-                `${chalk.dim('[Rate Limiter HTTP]')} Missing IP address in request info, skipping rate limiting for login route.`
-              );
+
+              for (const [prefix, prefixHandler] of Object.entries(
+                methodHandlers.prefix
+              )) {
+                if (hasPrefixPathSegment(pathname, prefix)) {
+                  return await prefixHandler(req, res, { info });
+                }
+              }
             }
-
-            await loginRouteHandler(req, res);
-          };
-
-          if (req.method === 'POST' && req.url === '/login') {
-            await handleLoginRequest();
-            return;
           }
 
-          if (req.method === 'POST' && req.url === '/auth/session/refresh') {
-            return await sessionRefreshRouteHandler(req, res);
-          }
-
-          if (req.method === 'POST' && req.url === '/auth/logout') {
-            return await authLogoutRouteHandler(req, res);
-          }
-
-          if (req.method === 'GET' && req.url?.startsWith('/public')) {
-            return await publicRouteHandler(req, res);
-          }
-
-          if (req.method === 'GET' && req.url?.startsWith('/')) {
+          if (method === 'GET') {
             return await interfaceRouteHandler(req, res);
           }
         } catch (error) {
@@ -246,7 +276,9 @@ const createHttpServer = async (port: number = config.server.port) => {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ errors: errorsMap }));
             return;
-          } else if (error instanceof HttpValidationError) {
+          }
+
+          if (error instanceof HttpValidationError) {
             errorsMap[error.field] = error.message;
 
             res.writeHead(400, { 'Content-Type': 'application/json' });
