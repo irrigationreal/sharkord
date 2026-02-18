@@ -72,6 +72,7 @@ const E2EE_CHANNEL_KEY_PREFIX = 'sharkord.e2ee.shadow.channel-key.v1.';
 const E2EE_COUNTER_RESERVATIONS = new Map<string, TCounterReservation>();
 const E2EE_DECRYPTED_CACHE = new Map<string, string>();
 const E2EE_TEMP_FILE_META = new Map<string, TEncryptedFileMeta>();
+const E2EE_TEMP_FILE_SHA256 = new Map<string, string>();
 const E2EE_FILE_META_BY_MESSAGE = new Map<number, Map<number, TEncryptedFileMeta>>();
 const E2EE_MARKER_RE = /^\[\[e2ee:v1:([0-9a-fA-F-]{36})\]\]$/;
 
@@ -550,7 +551,8 @@ const encryptForEnvelope = async ({
   noncePrefix,
   counter,
   cscHashHex,
-  clientMessageId
+  clientMessageId,
+  attachmentCiphertextSha256Hexes
 }: {
   channelId: number;
   epoch: number;
@@ -562,6 +564,7 @@ const encryptForEnvelope = async ({
   counter: number;
   cscHashHex: string;
   clientMessageId: string;
+  attachmentCiphertextSha256Hexes?: string[];
 }): Promise<TPreparedEnvelope> => {
   const header = new Map<number, unknown>([
     [0, 1],
@@ -577,6 +580,16 @@ const encryptForEnvelope = async ({
     [10, 1],
     [11, 0]
   ]);
+
+  if (
+    attachmentCiphertextSha256Hexes &&
+    attachmentCiphertextSha256Hexes.length > 0
+  ) {
+    header.set(
+      12,
+      attachmentCiphertextSha256Hexes.map((hashHex) => fromHex(hashHex))
+    );
+  }
 
   const headerBytes = encodeCanonical(header);
   const key = await getOrCreateChannelEncryptKey(channelId);
@@ -803,7 +816,11 @@ const hydrateMessagesWithCachedE2EE = (
 
 const prepareStrictE2EEFileForUpload = async (
   file: File
-): Promise<{ uploadFile: File; envelope: TEncryptedFileMeta }> => {
+): Promise<{
+  uploadFile: File;
+  envelope: TEncryptedFileMeta;
+  ciphertextSha256Hex: string;
+}> => {
   const key = crypto.getRandomValues(new Uint8Array(32));
   const nonce = crypto.getRandomValues(new Uint8Array(12));
   const cryptoKey = await crypto.subtle.importKey(
@@ -824,8 +841,10 @@ const prepareStrictE2EEFileForUpload = async (
     plainBytes
   );
 
+  const encryptedBytes = new Uint8Array(encrypted);
+  const ciphertextSha256Hex = toHex(sha256(encryptedBytes));
   const uploadFile = new File(
-    [new Uint8Array(encrypted)],
+    [encryptedBytes],
     `e2ee-${crypto.randomUUID()}.bin`,
     { type: 'application/octet-stream' }
   );
@@ -839,19 +858,23 @@ const prepareStrictE2EEFileForUpload = async (
       originalSize: file.size,
       keyB64: toBase64(key),
       nonceB64: toBase64(nonce)
-    }
+    },
+    ciphertextSha256Hex
   };
 };
 
 const registerStrictTempFileEnvelope = (
   tempFileId: string,
-  envelope: TEncryptedFileMeta
+  envelope: TEncryptedFileMeta,
+  ciphertextSha256Hex: string
 ) => {
   E2EE_TEMP_FILE_META.set(tempFileId, envelope);
+  E2EE_TEMP_FILE_SHA256.set(tempFileId, ciphertextSha256Hex);
 };
 
 const removeStrictTempFileEnvelope = (tempFileId: string) => {
   E2EE_TEMP_FILE_META.delete(tempFileId);
+  E2EE_TEMP_FILE_SHA256.delete(tempFileId);
 };
 
 const resolveStrictFileEnvelopes = (
@@ -867,6 +890,24 @@ const resolveStrictFileEnvelopes = (
     }
 
     resolved.push(meta);
+  }
+
+  return resolved;
+};
+
+const resolveStrictFileSha256Hexes = (
+  tempFileIds: string[]
+): string[] | null => {
+  const resolved: string[] = [];
+
+  for (const tempFileId of tempFileIds) {
+    const hashHex = E2EE_TEMP_FILE_SHA256.get(tempFileId);
+
+    if (!hashHex) {
+      return null;
+    }
+
+    resolved.push(hashHex);
   }
 
   return resolved;
@@ -912,8 +953,16 @@ const sendStrictE2EEMessage = async ({
     tempFileIds && tempFileIds.length > 0
       ? resolveStrictFileEnvelopes(tempFileIds)
       : [];
+  const fileCiphertextSha256Hexes =
+    tempFileIds && tempFileIds.length > 0
+      ? resolveStrictFileSha256Hexes(tempFileIds)
+      : [];
 
-  if (tempFileIds && tempFileIds.length > 0 && !fileMetas) {
+  if (
+    tempFileIds &&
+    tempFileIds.length > 0 &&
+    (!fileMetas || !fileCiphertextSha256Hexes)
+  ) {
     return null;
   }
 
@@ -934,7 +983,8 @@ const sendStrictE2EEMessage = async ({
     noncePrefix: reservation.noncePrefix,
     counter,
     cscHashHex: csc.cscHashHex,
-    clientMessageId
+    clientMessageId,
+    attachmentCiphertextSha256Hexes: fileCiphertextSha256Hexes || []
   });
 
   const created = await sendE2EEEncryptedMessage({
@@ -952,6 +1002,7 @@ const sendStrictE2EEMessage = async ({
   if (tempFileIds && tempFileIds.length > 0) {
     for (const tempFileId of tempFileIds) {
       E2EE_TEMP_FILE_META.delete(tempFileId);
+      E2EE_TEMP_FILE_SHA256.delete(tempFileId);
     }
   }
 

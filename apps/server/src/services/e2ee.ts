@@ -1,5 +1,7 @@
 import { ChannelPermission } from '@sharkord/shared';
 import { and, desc, eq, gte, inArray, isNull, lte, lt } from 'drizzle-orm';
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { db } from '../db';
 import { publishMessage } from '../db/publishers';
 import { channelUserCan } from '../db/queries/channels';
@@ -270,6 +272,51 @@ const assertByteLength = (
 ) => {
   if (value.length !== expectedLength) {
     badRequest(`${field} must be ${expectedLength} bytes`);
+  }
+};
+
+const hashFileSha256Hex = async (filePath: string): Promise<string> => {
+  const contents = await readFile(filePath);
+
+  return createHash('sha256').update(contents).digest('hex');
+};
+
+const verifyEncryptedAttachmentBinding = async ({
+  tempFileIds,
+  expectedCiphertextSha256Hexes,
+  userId
+}: {
+  tempFileIds: string[];
+  expectedCiphertextSha256Hexes: string[];
+  userId: number;
+}): Promise<void> => {
+  if (!tempFileIds.length && expectedCiphertextSha256Hexes.length === 0) {
+    return;
+  }
+
+  if (tempFileIds.length !== expectedCiphertextSha256Hexes.length) {
+    badRequest('Attachment hash list does not match attached files');
+  }
+
+  for (let i = 0; i < tempFileIds.length; i += 1) {
+    const tempFileId = tempFileIds[i]!;
+    const expectedSha256 = expectedCiphertextSha256Hexes[i]!;
+    const tempFile = fileManager.getTemporaryFile(tempFileId);
+
+    if (!tempFile) {
+      badRequest('Temporary attachment not found');
+    }
+    const ensuredTempFile = tempFile!;
+
+    if (ensuredTempFile.userId !== userId) {
+      forbidden("You don't have permission to access this attachment");
+    }
+
+    const actualSha256 = await hashFileSha256Hex(ensuredTempFile.path);
+
+    if (actualSha256 !== expectedSha256) {
+      conflict('Attachment hash mismatch');
+    }
   }
 };
 
@@ -1229,6 +1276,22 @@ const sendEncryptedMessage = async (
 ): Promise<TSendEncryptedMessageResult> => {
   const header = canonicalizeCborBase64(input.headerCborB64);
   const headerPayload = decodeMessageHeaderPayload(header.parsed);
+  const expectedAttachmentSha256Hexes = headerPayload.attachmentCiphertextSha256.map(
+    (hashBytes, index) => {
+      assertByteLength(
+        hashBytes,
+        32,
+        `attachment_ciphertext_sha256[${index}]`
+      );
+
+      return toHex(hashBytes);
+    }
+  );
+  await verifyEncryptedAttachmentBinding({
+    tempFileIds: input.files ?? [],
+    expectedCiphertextSha256Hexes: expectedAttachmentSha256Hexes,
+    userId: input.userId
+  });
   const submitted = await submitEnvelope(input);
   let threadRootMessageId: number | null = null;
 

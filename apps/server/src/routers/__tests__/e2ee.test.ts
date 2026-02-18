@@ -1,9 +1,10 @@
 import { ed25519 } from '@noble/curves/ed25519';
 import { sha256 } from '@noble/hashes/sha256';
+import { type TTempFile } from '@sharkord/shared';
 import { describe, expect, test } from 'bun:test';
 import { encode } from 'cborg';
 import { eq } from 'drizzle-orm';
-import { getCaller } from '../../__tests__/helpers';
+import { getCaller, uploadFile } from '../../__tests__/helpers';
 import { tdb } from '../../__tests__/setup';
 import {
   channelEpochDeviceEnvelopes,
@@ -11,6 +12,7 @@ import {
   devicePrekeys,
   e2eeDevices,
   e2eeMessageEnvelopes,
+  messageFiles,
   messages,
   userRootKeys
 } from '../../db/schema';
@@ -151,7 +153,8 @@ const createEnvelopeHeaderPayload = ({
   clientMessageId,
   timestamp,
   contentType = 1,
-  flags = 0
+  flags = 0,
+  attachmentCiphertextSha256Hexes
 }: {
   channelId: number;
   epoch: number;
@@ -164,8 +167,9 @@ const createEnvelopeHeaderPayload = ({
   timestamp: number;
   contentType?: number;
   flags?: number;
-}) =>
-  new Map<number, unknown>([
+  attachmentCiphertextSha256Hexes?: string[];
+}) => {
+  const payload = new Map<number, unknown>([
     [0, 1],
     [1, channelId],
     [2, epoch],
@@ -179,6 +183,21 @@ const createEnvelopeHeaderPayload = ({
     [10, contentType],
     [11, flags]
   ]);
+
+  if (
+    attachmentCiphertextSha256Hexes &&
+    attachmentCiphertextSha256Hexes.length > 0
+  ) {
+    payload.set(
+      12,
+      attachmentCiphertextSha256Hexes.map((hashHex) =>
+        Uint8Array.from(Buffer.from(hashHex, 'hex'))
+      )
+    );
+  }
+
+  return payload;
+};
 
 describe('e2ee router', () => {
   test('should register first ARK/device and persist records', async () => {
@@ -882,5 +901,142 @@ describe('e2ee router', () => {
       .get();
 
     expect(persistedMessage?.content).toBe(`[[e2ee:v1:${clientMessageId}]]`);
+  });
+
+  test('should reject encrypted message when attachment hashes do not match uploaded ciphertext', async () => {
+    const { caller, mockedToken } = await getCaller(1);
+    const now = Date.now();
+    const registration = createRegisterFixtures({
+      userId: 1,
+      deviceId: '14141414-1414-7141-8141-141414141414',
+      arkVersion: 1,
+      deviceSeq: 1,
+      prevArkHashHex: null,
+      timestamp: now
+    });
+
+    await caller.e2ee.registerDevice(registration.input);
+
+    const cscPayload = createCscPayload({
+      channelId: 1,
+      epoch: 1,
+      prevCscHashHex: null,
+      signerDeviceId: registration.deviceId,
+      timestamp: now + 1
+    });
+    const cscPayloadBytes = encodeCanonical(cscPayload);
+    const cscSignature = ed25519.sign(
+      sha256(cscPayloadBytes),
+      registration.deviceSignSecretKey
+    );
+    const cscResult = await caller.e2ee.publishChannelEpoch({
+      channelId: 1,
+      cscPayloadCborB64: toBase64(cscPayloadBytes),
+      cscSignatureB64: toBase64(cscSignature)
+    });
+
+    const uploadResponse = await uploadFile(
+      new File([Uint8Array.from([1, 2, 3, 4])], 'cipher.bin', {
+        type: 'application/octet-stream'
+      }),
+      mockedToken
+    );
+    expect(uploadResponse.status).toBe(200);
+    const tempFile = (await uploadResponse.json()) as TTempFile;
+    const clientMessageId = '15151515-1515-7151-8151-151515151515';
+    const headerPayload = createEnvelopeHeaderPayload({
+      channelId: 1,
+      epoch: 1,
+      cscHashHex: cscResult.cscHashHex,
+      senderUserId: 1,
+      senderDeviceId: registration.deviceId,
+      senderKeyId: 14,
+      counter: 1,
+      clientMessageId,
+      timestamp: now + 2,
+      attachmentCiphertextSha256Hexes: ['00'.repeat(32)]
+    });
+
+    await expect(
+      caller.e2ee.sendEncryptedMessage({
+        channelId: 1,
+        headerCborB64: toBase64(encodeCanonical(headerPayload)),
+        nonceB64: toBase64(Uint8Array.from(Buffer.from('aa'.repeat(12), 'hex'))),
+        ciphertextB64: toBase64(Uint8Array.from(Buffer.from('bead', 'hex'))),
+        tagB64: toBase64(Uint8Array.from(Buffer.from('bb'.repeat(16), 'hex'))),
+        files: [tempFile.id]
+      })
+    ).rejects.toThrow('Attachment hash mismatch');
+  });
+
+  test('should accept encrypted message when attachment hashes match uploaded ciphertext', async () => {
+    const { caller, mockedToken } = await getCaller(1);
+    const now = Date.now();
+    const registration = createRegisterFixtures({
+      userId: 1,
+      deviceId: '16161616-1616-7161-8161-161616161616',
+      arkVersion: 1,
+      deviceSeq: 1,
+      prevArkHashHex: null,
+      timestamp: now
+    });
+
+    await caller.e2ee.registerDevice(registration.input);
+
+    const cscPayload = createCscPayload({
+      channelId: 1,
+      epoch: 1,
+      prevCscHashHex: null,
+      signerDeviceId: registration.deviceId,
+      timestamp: now + 1
+    });
+    const cscPayloadBytes = encodeCanonical(cscPayload);
+    const cscSignature = ed25519.sign(
+      sha256(cscPayloadBytes),
+      registration.deviceSignSecretKey
+    );
+    const cscResult = await caller.e2ee.publishChannelEpoch({
+      channelId: 1,
+      cscPayloadCborB64: toBase64(cscPayloadBytes),
+      cscSignatureB64: toBase64(cscSignature)
+    });
+
+    const uploadBytes = Uint8Array.from([9, 8, 7, 6, 5]);
+    const uploadResponse = await uploadFile(
+      new File([uploadBytes], 'cipher.bin', { type: 'application/octet-stream' }),
+      mockedToken
+    );
+    expect(uploadResponse.status).toBe(200);
+    const tempFile = (await uploadResponse.json()) as TTempFile;
+    const clientMessageId = '17171717-1717-7171-8171-171717171717';
+    const headerPayload = createEnvelopeHeaderPayload({
+      channelId: 1,
+      epoch: 1,
+      cscHashHex: cscResult.cscHashHex,
+      senderUserId: 1,
+      senderDeviceId: registration.deviceId,
+      senderKeyId: 16,
+      counter: 1,
+      clientMessageId,
+      timestamp: now + 2,
+      attachmentCiphertextSha256Hexes: [toHex(sha256(uploadBytes))]
+    });
+
+    const sent = await caller.e2ee.sendEncryptedMessage({
+      channelId: 1,
+      headerCborB64: toBase64(encodeCanonical(headerPayload)),
+      nonceB64: toBase64(Uint8Array.from(Buffer.from('aa'.repeat(12), 'hex'))),
+      ciphertextB64: toBase64(Uint8Array.from(Buffer.from('bead', 'hex'))),
+      tagB64: toBase64(Uint8Array.from(Buffer.from('bb'.repeat(16), 'hex'))),
+      files: [tempFile.id]
+    });
+
+    const persistedLinks = await tdb
+      .select()
+      .from(messageFiles)
+      .where(eq(messageFiles.messageId, sent.messageId))
+      .all();
+
+    expect(persistedLinks).toHaveLength(1);
   });
 });

@@ -56,6 +56,7 @@ type TMessageHeaderPayload = {
   createdAtMs: number;
   contentType: number;
   flags: number;
+  attachmentCiphertextSha256: Uint8Array[];
 };
 
 const isMap = (value: unknown): value is Map<unknown, unknown> =>
@@ -121,6 +122,18 @@ const asOptionalBytes = (value: unknown, field: string): Uint8Array | null => {
   if (value === null) return null;
 
   return asBytes(value, field);
+};
+
+const asBytesArray = (value: unknown, field: string): Uint8Array[] => {
+  if (!Array.isArray(value)) {
+    badRequest(`${field} must be an array`);
+  }
+
+  const values = value as unknown[];
+
+  return values.map((item: unknown, index: number) =>
+    asBytes(item, `${field}[${index}]`)
+  );
 };
 
 const decodeArkRecord = (value: unknown): TArkRecord => ({
@@ -192,20 +205,28 @@ const decodeCscPayload = (value: unknown): TCscPayload => ({
   createdAtMs: asNumber(getMapField(value, 7), 'csc.created_at_ms')
 });
 
-const decodeMessageHeaderPayload = (value: unknown): TMessageHeaderPayload => ({
-  version: asUint(getMapField(value, 0), 'msg.version'),
-  channelId: asUint(getMapField(value, 1), 'msg.channel_id'),
-  epoch: asUint(getMapField(value, 2), 'msg.epoch'),
-  cscHash: asBytes(getMapField(value, 3), 'msg.csc_hash'),
-  senderUserId: asUint(getMapField(value, 4), 'msg.sender_user_id'),
-  senderDeviceId: asString(getMapField(value, 5), 'msg.sender_device_id'),
-  senderKeyId: asUint(getMapField(value, 6), 'msg.sender_key_id'),
-  counter: asUint(getMapField(value, 7), 'msg.counter'),
-  clientMessageId: asString(getMapField(value, 8), 'msg.client_message_id'),
-  createdAtMs: asUint(getMapField(value, 9), 'msg.created_at_ms'),
-  contentType: asUint(getMapField(value, 10), 'msg.content_type'),
-  flags: asUint(getMapField(value, 11), 'msg.flags')
-});
+const decodeMessageHeaderPayload = (value: unknown): TMessageHeaderPayload => {
+  const map = asMap(value);
+  const attachmentCiphertextSha256 = map.has(12)
+    ? asBytesArray(map.get(12), 'msg.attachment_ciphertext_sha256')
+    : [];
+
+  return {
+    version: asUint(getMapField(map, 0), 'msg.version'),
+    channelId: asUint(getMapField(map, 1), 'msg.channel_id'),
+    epoch: asUint(getMapField(map, 2), 'msg.epoch'),
+    cscHash: asBytes(getMapField(map, 3), 'msg.csc_hash'),
+    senderUserId: asUint(getMapField(map, 4), 'msg.sender_user_id'),
+    senderDeviceId: asString(getMapField(map, 5), 'msg.sender_device_id'),
+    senderKeyId: asUint(getMapField(map, 6), 'msg.sender_key_id'),
+    counter: asUint(getMapField(map, 7), 'msg.counter'),
+    clientMessageId: asString(getMapField(map, 8), 'msg.client_message_id'),
+    createdAtMs: asUint(getMapField(map, 9), 'msg.created_at_ms'),
+    contentType: asUint(getMapField(map, 10), 'msg.content_type'),
+    flags: asUint(getMapField(map, 11), 'msg.flags'),
+    attachmentCiphertextSha256
+  };
+};
 
 export {
   decodeArkRecord,

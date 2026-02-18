@@ -59,6 +59,17 @@ check_must_match "Blocked non-E2EE message" \
   "apps/client/src/features/e2ee/shadow.ts" \
   "Expected non-E2EE message redaction is missing."
 
+# Attachment ciphertext hashes must be signed in header and verified server-side.
+check_must_match "attachmentCiphertextSha256" \
+  "apps/server/src/e2ee/decoders.ts apps/server/src/services/e2ee.ts" \
+  "Attachment hash binding fields are missing from server header decode/verify path."
+check_must_match "createHash\\('sha256'\\)" \
+  "apps/server/src/services/e2ee.ts" \
+  "Server-side ciphertext hash verification is missing."
+check_must_match "verifyEncryptedAttachmentBinding" \
+  "apps/server/src/services/e2ee.ts" \
+  "Attachment hash binding verification is not wired in sendEncryptedMessage."
+
 if [[ "$has_error" -ne 0 ]]; then
   exit 1
 fi

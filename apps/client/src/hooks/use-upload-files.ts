@@ -53,7 +53,11 @@ const useUploadFiles = (disabled: boolean = false, channelId?: number) => {
 
         if (!uploaded) continue;
 
-        registerStrictTempFileEnvelope(uploaded.id, prepared.envelope);
+        registerStrictTempFileEnvelope(
+          uploaded.id,
+          prepared.envelope,
+          prepared.ciphertextSha256Hex
+        );
 
         uploadedFiles.push({
           ...uploaded,
