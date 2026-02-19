@@ -6,6 +6,7 @@ import { serverSliceActions } from '../slice';
 import { playSound } from '../sounds/actions';
 import { SoundType } from '../types';
 import { ownUserIdSelector } from '../users/selectors';
+import { notifyEncryptedMessage } from './notifications';
 
 const typingTimeouts: { [key: string]: NodeJS.Timeout } = {};
 
@@ -35,6 +36,7 @@ export const addMessages = (
 
     if (!isFromOwnUser) {
       playSound(SoundType.MESSAGE_RECEIVED);
+      void notifyEncryptedMessage(targetMessage);
     }
 
     if (channelId === selectedChannelId && !isFromOwnUser) {

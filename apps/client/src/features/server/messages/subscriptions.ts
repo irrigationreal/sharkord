@@ -10,10 +10,12 @@ import {
   upsertThreadMessage,
   updateMessage
 } from './actions';
+import { primeEncryptedNotifications } from './notifications';
 
 const subscribeToMessages = () => {
   const trpc = getTRPCClient();
   const getOwnUserId = () => ownUserIdSelector(store.getState());
+  primeEncryptedNotifications();
 
   const onMessageSub = trpc.messages.onNew.subscribe(undefined, {
     onData: async (message: TJoinedMessage) => {
