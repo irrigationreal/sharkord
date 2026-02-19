@@ -1190,7 +1190,7 @@ const submitEnvelope = async (
     conflict('duplicate counter');
   }
 
-  const createdAt = headerPayload.createdAtMs;
+  const createdAt = Date.now();
   const inserted = await db
     .insert(e2eeMessageEnvelopes)
     .values({
@@ -1328,7 +1328,7 @@ const sendEncryptedMessage = async (
     threadRootMessageId = rootMessage!.id;
   }
 
-  const createdAt = headerPayload.createdAtMs;
+  const createdAt = submitted.createdAt;
   const placeholderContent = `[[e2ee:v1:${headerPayload.clientMessageId}]]`;
   const inserted = await db
     .insert(messages)

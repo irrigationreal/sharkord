@@ -61,6 +61,12 @@ check_must_match "Blocked non-E2EE message" \
 check_no_matches "html:\\s*plaintext|legacy plain payload" \
   "apps/client/src/features/e2ee/shadow.ts" \
   "Client E2EE parser must not fall back to plaintext payload rendering."
+check_no_matches "\\[9,\\s*Date\\.now\\(" \
+  "apps/client/src/features/e2ee/shadow.ts" \
+  "Message headers must not carry raw client timestamps."
+check_must_match "serializePaddedMessagePayload|E2EE_FILE_PAD_BLOCK_BYTES" \
+  "apps/client/src/features/e2ee/shadow.ts" \
+  "Client should pad encrypted message/file payloads to reduce metadata leakage."
 
 # Attachment ciphertext hashes must be signed in header and verified server-side.
 check_must_match "attachmentCiphertextSha256" \
@@ -72,6 +78,9 @@ check_must_match "createHash\\('sha256'\\)" \
 check_must_match "verifyEncryptedAttachmentBinding" \
   "apps/server/src/services/e2ee.ts" \
   "Attachment hash binding verification is not wired in sendEncryptedMessage."
+check_no_matches "const createdAt = headerPayload\\.createdAtMs" \
+  "apps/server/src/services/e2ee.ts" \
+  "Server must not trust client-provided message timestamps for persistence."
 
 # Server-side read/publish paths must enforce E2EE-only message bodies/files.
 check_must_match "enforceE2EEMessageBody|isE2EEMessageMarker" \

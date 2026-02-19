@@ -78,6 +78,8 @@ const E2EE_RESHARE_COOLDOWN_BY_CHANNEL = new Map<number, number>();
 const E2EE_RESHARE_IN_FLIGHT = new Map<number, Promise<boolean>>();
 const E2EE_MARKER_RE = /^\[\[e2ee:v1:([0-9a-fA-F-]{36})\]\]$/;
 const E2EE_RESHARE_COOLDOWN_MS = 60_000;
+const E2EE_MESSAGE_PAD_BLOCK_BYTES = 256;
+const E2EE_FILE_PAD_BLOCK_BYTES = 4096;
 
 const toBase64 = (value: Uint8Array): string =>
   btoa(String.fromCharCode(...value));
@@ -127,6 +129,48 @@ const POLICY_DIGEST_V1 = sha256(
 
 const computeMembershipDigest = (deviceIds: string[]): Uint8Array =>
   sha256(new TextEncoder().encode([...deviceIds].sort().join(',')));
+
+const alignBytes = (value: number, blockSize: number): number =>
+  Math.ceil(value / blockSize) * blockSize;
+
+const padBytesToBlock = (
+  bytes: Uint8Array,
+  blockSize: number
+): Uint8Array => {
+  const targetLength = alignBytes(Math.max(1, bytes.length), blockSize);
+
+  if (targetLength === bytes.length) {
+    return bytes;
+  }
+
+  const padded = new Uint8Array(targetLength);
+  padded.set(bytes);
+  crypto.getRandomValues(padded.subarray(bytes.length));
+
+  return padded;
+};
+
+const serializePaddedMessagePayload = (payload: TE2EEMessagePayload): string => {
+  const base = JSON.stringify(payload);
+  const encoder = new TextEncoder();
+
+  if (encoder.encode(base).length % E2EE_MESSAGE_PAD_BLOCK_BYTES === 0) {
+    return base;
+  }
+
+  for (let padLength = 1; padLength <= E2EE_MESSAGE_PAD_BLOCK_BYTES * 2; padLength += 1) {
+    const candidate = JSON.stringify({
+      ...payload,
+      pad: '0'.repeat(padLength)
+    });
+
+    if (encoder.encode(candidate).length % E2EE_MESSAGE_PAD_BLOCK_BYTES === 0) {
+      return candidate;
+    }
+  }
+
+  return base;
+};
 
 const isStrictE2EEEnabled = (): boolean => true;
 
@@ -639,7 +683,7 @@ const encryptForEnvelope = async ({
     [6, senderKeyIdU32],
     [7, counter],
     [8, clientMessageId],
-    [9, Date.now()],
+    [9, 0],
     [10, 1],
     [11, 0]
   ]);
@@ -892,6 +936,7 @@ const prepareStrictE2EEFileForUpload = async (
     ['encrypt']
   );
   const plainBytes = new Uint8Array(await file.arrayBuffer());
+  const paddedPlainBytes = padBytesToBlock(plainBytes, E2EE_FILE_PAD_BLOCK_BYTES);
   const encrypted = await crypto.subtle.encrypt(
     {
       name: 'AES-GCM',
@@ -899,7 +944,7 @@ const prepareStrictE2EEFileForUpload = async (
       tagLength: 128
     },
     cryptoKey,
-    plainBytes
+    paddedPlainBytes
   );
 
   const encryptedBytes = new Uint8Array(encrypted);
@@ -1032,7 +1077,7 @@ const sendStrictE2EEMessage = async ({
     html: content || '',
     files: fileMetas || []
   };
-  const plaintext = JSON.stringify(payload);
+  const plaintext = serializePaddedMessagePayload(payload);
 
   const envelope = await encryptForEnvelope({
     channelId,
@@ -1279,8 +1324,14 @@ const openStrictE2EEFile = async ({
     key,
     encryptedBytes
   );
+  const decryptedBytes = new Uint8Array(decrypted);
 
-  const blob = new Blob([decrypted], { type: meta.originalMimeType });
+  if (meta.originalSize > decryptedBytes.length) {
+    throw new Error('Encrypted file payload is truncated');
+  }
+
+  const plainBytes = decryptedBytes.slice(0, meta.originalSize);
+  const blob = new Blob([plainBytes], { type: meta.originalMimeType });
   const blobUrl = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = blobUrl;
