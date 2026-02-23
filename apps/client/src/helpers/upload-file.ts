@@ -1,10 +1,11 @@
 import { UploadHeaders, type TTempFile } from '@sharkord/shared';
 import { toast } from 'sonner';
+import { getValidSessionToken } from './auth-session';
 import { getUrlFromServer } from './get-file-url';
-import { getSessionStorageItem, SessionStorageKey } from './storage';
 
 const uploadFile = async (file: File) => {
   const url = getUrlFromServer();
+  const token = await getValidSessionToken();
 
   const res = await fetch(`${url}/upload`, {
     method: 'POST',
@@ -13,8 +14,7 @@ const uploadFile = async (file: File) => {
       [UploadHeaders.TYPE]: file.type,
       [UploadHeaders.CONTENT_LENGTH]: file.size.toString(),
       [UploadHeaders.ORIGINAL_NAME]: file.name,
-      [UploadHeaders.TOKEN]:
-        getSessionStorageItem(SessionStorageKey.TOKEN) ?? ''
+      [UploadHeaders.TOKEN]: token
     },
     body: file
   });

@@ -2,11 +2,11 @@ import { EmojiPicker } from '@/components/emoji-picker';
 import { useRecentEmojis } from '@/components/emoji-picker/use-recent-emojis';
 import { Protect } from '@/components/protect';
 import type { TEmojiItem } from '@/components/tiptap-input/types';
-import { IconButton } from '@/components/ui/icon-button';
 import { requestConfirmation } from '@/features/dialogs/actions';
 import { getTRPCClient } from '@/lib/trpc';
 import { Permission } from '@sharkord/shared';
-import { Pencil, Smile, Trash } from 'lucide-react';
+import { MessageSquareReply, Smile, Trash } from 'lucide-react';
+import { IconButton } from '@sharkord/ui';
 import { memo, useCallback, useMemo } from 'react';
 import { toast } from 'sonner';
 
@@ -14,13 +14,18 @@ const MAX_QUICK_EMOJIS = 4;
 
 type TMessageActionsProps = {
   messageId: number;
-  onEdit: () => void;
   canManage: boolean;
-  editable: boolean;
+  onOpenThread?: () => void;
+  showThreadAction?: boolean;
 };
 
 const MessageActions = memo(
-  ({ onEdit, messageId, canManage, editable }: TMessageActionsProps) => {
+  ({
+    messageId,
+    canManage,
+    onOpenThread,
+    showThreadAction
+  }: TMessageActionsProps) => {
     const { recentEmojis } = useRecentEmojis();
     const recentEmojisToShow = useMemo(
       () => recentEmojis.slice(0, MAX_QUICK_EMOJIS),
@@ -73,20 +78,20 @@ const MessageActions = memo(
             <IconButton
               size="sm"
               variant="ghost"
-              icon={Pencil}
-              onClick={onEdit}
-              disabled={!editable}
-              title="Edit Message"
-            />
-
-            <IconButton
-              size="sm"
-              variant="ghost"
               icon={Trash}
               onClick={onDeleteClick}
               title="Delete Message"
             />
           </>
+        )}
+        {showThreadAction && onOpenThread && (
+          <IconButton
+            size="sm"
+            variant="ghost"
+            icon={MessageSquareReply}
+            onClick={onOpenThread}
+            title="Open Thread"
+          />
         )}
         <Protect permission={Permission.REACT_TO_MESSAGES}>
           <div className="flex items-center space-x-0.5 border-l pl-1 gap-1">

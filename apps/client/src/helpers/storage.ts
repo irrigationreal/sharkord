@@ -10,11 +10,15 @@ export enum LocalStorageKey {
   VOICE_CHAT_SIDEBAR_STATE = 'sharkord-voice-chat-sidebar-state',
   VOICE_CHAT_SIDEBAR_WIDTH = 'sharkord-voice-chat-sidebar-width',
   VOLUME_SETTINGS = 'sharkord-volume-settings',
-  RECENT_EMOJIS = 'sharkord-recent-emojis'
+  RECENT_EMOJIS = 'sharkord-recent-emojis',
+  DEBUG = 'sharkord-debug'
 }
 
 export enum SessionStorageKey {
-  TOKEN = 'sharkord-token'
+  TOKEN = 'sharkord-token',
+  REFRESH_TOKEN = 'sharkord-refresh-token',
+  ACCESS_TOKEN_EXPIRES_AT = 'sharkord-access-token-expires-at',
+  REFRESH_TOKEN_EXPIRES_AT = 'sharkord-refresh-token-expires-at'
 }
 
 const getLocalStorageItem = (key: LocalStorageKey): string | null => {

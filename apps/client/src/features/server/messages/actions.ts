@@ -6,6 +6,7 @@ import { serverSliceActions } from '../slice';
 import { playSound } from '../sounds/actions';
 import { SoundType } from '../types';
 import { ownUserIdSelector } from '../users/selectors';
+import { notifyEncryptedMessage } from './notifications';
 
 const typingTimeouts: { [key: string]: NodeJS.Timeout } = {};
 
@@ -35,6 +36,7 @@ export const addMessages = (
 
     if (!isFromOwnUser) {
       playSound(SoundType.MESSAGE_RECEIVED);
+      void notifyEncryptedMessage(targetMessage);
     }
 
     if (channelId === selectedChannelId && !isFromOwnUser) {
@@ -50,8 +52,31 @@ export const addMessages = (
   }
 };
 
+export const addThreadMessages = (
+  channelId: number,
+  threadRootMessageId: number,
+  messages: TJoinedMessage[],
+  opts: { prepend?: boolean } = {}
+) => {
+  store.dispatch(
+    serverSliceActions.addThreadMessages({
+      channelId,
+      threadRootMessageId,
+      messages,
+      opts
+    })
+  );
+};
+
 export const updateMessage = (channelId: number, message: TJoinedMessage) => {
   store.dispatch(serverSliceActions.updateMessage({ channelId, message }));
+};
+
+export const upsertThreadMessage = (
+  channelId: number,
+  message: TJoinedMessage
+) => {
+  store.dispatch(serverSliceActions.upsertThreadMessage({ channelId, message }));
 };
 
 export const deleteMessage = (channelId: number, messageId: number) => {

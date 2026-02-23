@@ -127,3 +127,204 @@ export type TChannelUserPermissionsMap = Record<
 >;
 
 export type TReadStateMap = Record<number, number>;
+
+export type TE2EERegisterDeviceInput = {
+  arkRecordCborB64: string;
+  deviceRecordCborB64: string;
+  deviceAuthorizationCborB64: string;
+};
+
+export type TE2EERegisterDeviceResult = {
+  arkVersion: number;
+  deviceId: string;
+  deviceSeq: number;
+  arkHashHex: string;
+  deviceRecordHashHex: string;
+};
+
+export type TE2EERevokeDeviceInput = {
+  deviceId: string;
+  arkVersion: number;
+  revokeAuthorizationCborB64: string;
+};
+
+export type TE2EEIdentityBootstrapResult = {
+  latestArkVersion: number | null;
+  latestArkHashHex: string | null;
+  latestDeviceSeq: number | null;
+};
+
+export type TE2EEPublishChannelEpochInput = {
+  channelId: number;
+  cscPayloadCborB64: string;
+  cscSignatureB64: string;
+  deviceEnvelopes?: Array<{
+    recipientDeviceId: string;
+    envelope: string;
+  }>;
+};
+
+export type TE2EEPublishChannelEpochResult = {
+  channelId: number;
+  epoch: number;
+  cscHashHex: string;
+};
+
+export type TE2EELatestChannelState = {
+  latestEpoch: number | null;
+  latestCscHashHex: string | null;
+  latestCscPayloadCborB64: string | null;
+  latestCscSignatureB64: string | null;
+};
+
+export type TE2EEAuthorizedDevice = {
+  deviceId: string;
+  deviceSeq: number;
+  signPubHex: string;
+  kemPubHex: string;
+  arkVersion: number;
+  authorizedAt: number;
+};
+
+export type TE2EEUploadPrekeysInput = {
+  deviceId: string;
+  signedPrekey: {
+    prekeyId: string;
+    prekeyPubB64: string;
+    signatureB64: string;
+    createdAtMs: number;
+  };
+  oneTimePrekeys: Array<{
+    prekeyId: string;
+    prekeyPubB64: string;
+    createdAtMs: number;
+  }>;
+};
+
+export type TE2EEClaimPrekeyInput = {
+  targetUserId: number;
+  targetDeviceId: string;
+};
+
+export type TE2EEClaimPrekeyResult = {
+  deviceId: string;
+  signedPrekey: {
+    prekeyId: string;
+    prekeyPubB64: string;
+    signatureB64: string;
+  };
+  oneTimePrekey: {
+    prekeyId: string;
+    prekeyPubB64: string;
+  } | null;
+};
+
+export type TE2EERequestKeyCatchupInput = {
+  channelId: number;
+  fromEpochInclusive: number;
+  toEpochInclusive: number;
+  missingSenders?: Array<{
+    senderDeviceId: string;
+    senderKeyId: string;
+  }>;
+  reason:
+    | 'channel_open'
+    | 'scroll_backfill'
+    | 'decrypt_pending'
+    | 'device_restore';
+};
+
+export type TE2EEReserveNonceBlockInput = {
+  senderKeyId: string;
+};
+
+export type TE2EEReserveNonceBlockResult = {
+  senderKeyId: string;
+  noncePrefix: number;
+  startCounter: number;
+  endCounter: number;
+};
+
+export type TE2EESubmitEnvelopeInput = {
+  channelId: number;
+  headerCborB64: string;
+  nonceB64: string;
+  ciphertextB64: string;
+  tagB64: string;
+  sigB64?: string;
+};
+
+export type TE2EESubmitEnvelopeResult = {
+  envelopeId: number;
+  acceptedCounter: number;
+  createdAt: number;
+};
+
+export type TE2EEGetEnvelopesInput = {
+  channelId: number;
+  cursorId?: number;
+  limit?: number;
+  fromEpochInclusive?: number;
+  toEpochInclusive?: number;
+};
+
+export type TE2EEGetEnvelopesResult = {
+  envelopes: Array<{
+    id: number;
+    channelId: number;
+    epoch: number;
+    senderUserId: number;
+    senderDeviceId: string;
+    senderKeyId: string;
+    counter: number;
+    clientMessageId: string;
+    contentType: number;
+    flags: number;
+    cscHashHex: string;
+    headerCborB64: string;
+    nonceB64: string;
+    ciphertextB64: string;
+    tagB64: string;
+    sigB64: string | null;
+    createdAt: number;
+  }>;
+  nextCursorId: number | null;
+};
+
+export type TE2EESendEncryptedMessageInput = {
+  channelId: number;
+  parentMessageId?: number;
+  headerCborB64: string;
+  nonceB64: string;
+  ciphertextB64: string;
+  tagB64: string;
+  sigB64?: string;
+  files?: string[];
+};
+
+export type TE2EESendEncryptedMessageResult = {
+  messageId: number;
+  envelopeId: number;
+  clientMessageId: string;
+  createdAt: number;
+};
+
+export type TE2EERequestKeyCatchupResult = {
+  cscChain: Array<{
+    epoch: number;
+    cscSigned: string;
+    cscHashHex: string;
+    signerUserId: number;
+    signerDeviceId: string;
+  }>;
+  deviceKeyEnvelopes: Array<{
+    epoch: number;
+    recipientDeviceId: string;
+    envelope: string;
+  }>;
+  historyBoundaries: Array<{
+    type: 'channel_created_boundary';
+    effectiveFromTs: number;
+    reason: string;
+  }>;
+};

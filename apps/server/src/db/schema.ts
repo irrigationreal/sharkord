@@ -3,6 +3,7 @@ import {
   type TMessageMetadata
 } from '@sharkord/shared';
 import {
+  type AnySQLiteColumn,
   index,
   integer,
   primaryKey,
@@ -194,6 +195,357 @@ const logins = sqliteTable(
   ]
 );
 
+const userDevices = sqliteTable(
+  'user_devices',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    fingerprint: text('fingerprint').notNull(),
+    userAgent: text('user_agent'),
+    os: text('os'),
+    device: text('device'),
+    ip: text('ip'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at'),
+    lastSeenAt: integer('last_seen_at'),
+    revokedAt: integer('revoked_at')
+  },
+  (t) => [
+    index('user_devices_user_idx').on(t.userId),
+    index('user_devices_fingerprint_idx').on(t.fingerprint),
+    uniqueIndex('user_devices_user_fingerprint_idx').on(
+      t.userId,
+      t.fingerprint
+    ),
+    index('user_devices_user_last_seen_idx').on(t.userId, t.lastSeenAt)
+  ]
+);
+
+const authSessions = sqliteTable(
+  'auth_sessions',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    userDeviceId: integer('user_device_id').references(() => userDevices.id, {
+      onDelete: 'set null'
+    }),
+    authProvider: text('auth_provider'),
+    accessTokenHash: text('access_token_hash').notNull().unique(),
+    refreshTokenHash: text('refresh_token_hash').notNull().unique(),
+    accessExpiresAt: integer('access_expires_at').notNull(),
+    refreshExpiresAt: integer('refresh_expires_at').notNull(),
+    revokedAt: integer('revoked_at'),
+    revokedReason: text('revoked_reason'),
+    lastSeenAt: integer('last_seen_at'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at')
+  },
+  (t) => [
+    index('auth_sessions_user_idx').on(t.userId),
+    index('auth_sessions_device_idx').on(t.userDeviceId),
+    index('auth_sessions_access_expires_idx').on(t.accessExpiresAt),
+    index('auth_sessions_refresh_expires_idx').on(t.refreshExpiresAt),
+    index('auth_sessions_revoked_idx').on(t.revokedAt)
+  ]
+);
+
+const authSessionRefreshTokens = sqliteTable(
+  'auth_session_refresh_tokens',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    authSessionId: integer('auth_session_id')
+      .notNull()
+      .references(() => authSessions.id, {
+        onDelete: 'cascade'
+      }),
+    tokenHash: text('token_hash').notNull().unique(),
+    reason: text('reason').notNull().default('rotated'),
+    createdAt: integer('created_at').notNull(),
+    usedAt: integer('used_at').notNull()
+  },
+  (t) => [
+    index('auth_session_refresh_tokens_session_idx').on(t.authSessionId),
+    index('auth_session_refresh_tokens_reason_idx').on(t.reason)
+  ]
+);
+
+const authIdentities = sqliteTable(
+  'auth_identities',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    provider: text('provider').notNull(),
+    providerSubject: text('provider_subject').notNull(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at'),
+    lastLoginAt: integer('last_login_at')
+  },
+  (t) => [
+    index('auth_identities_user_idx').on(t.userId),
+    uniqueIndex('auth_identities_provider_subject_idx').on(
+      t.provider,
+      t.providerSubject
+    )
+  ]
+);
+
+const oauthStates = sqliteTable(
+  'oauth_states',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    stateHash: text('state_hash').notNull().unique(),
+    provider: text('provider').notNull(),
+    deviceId: text('device_id'),
+    inviteCode: text('invite_code'),
+    redirectPath: text('redirect_path'),
+    createdAt: integer('created_at').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+    consumedAt: integer('consumed_at')
+  },
+  (t) => [index('oauth_states_provider_idx').on(t.provider, t.expiresAt)]
+);
+
+const userRootKeys = sqliteTable(
+  'user_root_keys',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    arkVersion: integer('ark_version').notNull(),
+    arkPub: text('ark_pub').notNull(),
+    arkRecordCbor: text('ark_record_cbor').notNull(),
+    arkHash: text('ark_hash').notNull(),
+    prevArkHash: text('prev_ark_hash'),
+    createdAt: integer('created_at').notNull()
+  },
+  (t) => [
+    uniqueIndex('user_root_keys_user_version_idx').on(t.userId, t.arkVersion),
+    index('user_root_keys_user_created_idx').on(t.userId, t.createdAt)
+  ]
+);
+
+const e2eeDevices = sqliteTable(
+  'e2ee_devices',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    deviceId: text('device_id').notNull(),
+    deviceSeq: integer('device_seq').notNull(),
+    signPub: text('sign_pub').notNull(),
+    kemPub: text('kem_pub').notNull(),
+    cryptoProfile: text('crypto_profile').notNull(),
+    capabilities: integer('capabilities').notNull(),
+    deviceRecordCbor: text('device_record_cbor').notNull(),
+    deviceRecordHash: text('device_record_hash').notNull(),
+    createdAt: integer('created_at').notNull(),
+    revokedAt: integer('revoked_at')
+  },
+  (t) => [
+    uniqueIndex('e2ee_devices_user_device_id_idx').on(t.userId, t.deviceId),
+    uniqueIndex('e2ee_devices_user_device_seq_idx').on(t.userId, t.deviceSeq),
+    index('e2ee_devices_user_revoked_idx').on(t.userId, t.revokedAt)
+  ]
+);
+
+const deviceAuthorizations = sqliteTable(
+  'device_authorizations',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    deviceId: text('device_id').notNull(),
+    arkVersion: integer('ark_version').notNull(),
+    deviceRecordHash: text('device_record_hash').notNull(),
+    deviceSeq: integer('device_seq').notNull(),
+    action: integer('action').notNull(),
+    statementCbor: text('statement_cbor').notNull(),
+    signature: text('signature').notNull(),
+    createdAt: integer('created_at').notNull()
+  },
+  (t) => [
+    index('device_auth_user_device_created_idx').on(
+      t.userId,
+      t.deviceId,
+      t.createdAt
+    ),
+    index('device_auth_user_device_action_idx').on(t.userId, t.deviceId, t.action)
+  ]
+);
+
+const channelStateCommitments = sqliteTable(
+  'channel_state_commitments',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    channelId: integer('channel_id')
+      .notNull()
+      .references(() => channels.id, { onDelete: 'cascade' }),
+    epoch: integer('epoch').notNull(),
+    cscHash: text('csc_hash').notNull(),
+    prevCscHash: text('prev_csc_hash'),
+    membershipDigest: text('membership_digest').notNull(),
+    policyDigest: text('policy_digest').notNull(),
+    signerUserId: integer('signer_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    signerDeviceId: text('signer_device_id').notNull(),
+    payloadCbor: text('payload_cbor').notNull(),
+    signature: text('signature').notNull(),
+    createdAt: integer('created_at').notNull()
+  },
+  (t) => [
+    uniqueIndex('channel_state_commitments_channel_epoch_idx').on(
+      t.channelId,
+      t.epoch
+    ),
+    uniqueIndex('channel_state_commitments_channel_hash_idx').on(
+      t.channelId,
+      t.cscHash
+    ),
+    index('channel_state_commitments_channel_created_idx').on(
+      t.channelId,
+      t.createdAt
+    )
+  ]
+);
+
+const devicePrekeys = sqliteTable(
+  'device_prekeys',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    deviceId: text('device_id').notNull(),
+    prekeyId: text('prekey_id').notNull(),
+    prekeyPub: text('prekey_pub').notNull(),
+    signature: text('signature'),
+    oneTime: integer('one_time', { mode: 'boolean' }).notNull(),
+    createdAt: integer('created_at').notNull(),
+    usedAt: integer('used_at')
+  },
+  (t) => [
+    uniqueIndex('device_prekeys_device_prekey_idx').on(t.deviceId, t.prekeyId),
+    index('device_prekeys_user_device_idx').on(t.userId, t.deviceId),
+    index('device_prekeys_device_one_time_used_idx').on(
+      t.deviceId,
+      t.oneTime,
+      t.usedAt
+    )
+  ]
+);
+
+const channelEpochDeviceEnvelopes = sqliteTable(
+  'channel_epoch_device_envelopes',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    channelId: integer('channel_id')
+      .notNull()
+      .references(() => channels.id, { onDelete: 'cascade' }),
+    epoch: integer('epoch').notNull(),
+    recipientDeviceId: text('recipient_device_id').notNull(),
+    envelope: text('envelope').notNull(),
+    createdAt: integer('created_at').notNull()
+  },
+  (t) => [
+    uniqueIndex('channel_epoch_device_envelopes_unique_idx').on(
+      t.channelId,
+      t.epoch,
+      t.recipientDeviceId
+    ),
+    index('channel_epoch_device_envelopes_channel_epoch_idx').on(
+      t.channelId,
+      t.epoch
+    ),
+    index('channel_epoch_device_envelopes_recipient_idx').on(t.recipientDeviceId)
+  ]
+);
+
+const senderNonceAllocators = sqliteTable(
+  'sender_nonce_allocators',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    senderKeyId: text('sender_key_id').notNull().unique(),
+    noncePrefix: integer('nonce_prefix').notNull(),
+    nextCounter: integer('next_counter').notNull(),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (t) => [
+    uniqueIndex('sender_nonce_allocators_sender_key_idx').on(t.senderKeyId),
+    index('sender_nonce_allocators_updated_idx').on(t.updatedAt)
+  ]
+);
+
+const replayWindows = sqliteTable(
+  'replay_windows',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    channelId: integer('channel_id')
+      .notNull()
+      .references(() => channels.id, { onDelete: 'cascade' }),
+    senderDeviceId: text('sender_device_id').notNull(),
+    senderKeyId: text('sender_key_id').notNull(),
+    maxCounter: integer('max_counter').notNull(),
+    bitmapBase64: text('bitmap_base64').notNull(),
+    updatedAt: integer('updated_at').notNull()
+  },
+  (t) => [
+    uniqueIndex('replay_windows_unique_idx').on(
+      t.channelId,
+      t.senderDeviceId,
+      t.senderKeyId
+    ),
+    index('replay_windows_updated_idx').on(t.updatedAt)
+  ]
+);
+
+const e2eeMessageEnvelopes = sqliteTable(
+  'e2ee_message_envelopes',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    channelId: integer('channel_id')
+      .notNull()
+      .references(() => channels.id, { onDelete: 'cascade' }),
+    epoch: integer('epoch').notNull(),
+    senderUserId: integer('sender_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    senderDeviceId: text('sender_device_id').notNull(),
+    senderKeyId: text('sender_key_id').notNull(),
+    counter: integer('counter').notNull(),
+    clientMessageId: text('client_message_id').notNull(),
+    contentType: integer('content_type').notNull(),
+    flags: integer('flags').notNull(),
+    cscHash: text('csc_hash').notNull(),
+    headerCbor: text('header_cbor').notNull(),
+    nonceB64: text('nonce_b64').notNull(),
+    ciphertextB64: text('ciphertext_b64').notNull(),
+    tagB64: text('tag_b64').notNull(),
+    sigB64: text('sig_b64'),
+    createdAt: integer('created_at').notNull()
+  },
+  (t) => [
+    uniqueIndex('e2ee_message_envelopes_message_idx').on(t.clientMessageId),
+    uniqueIndex('e2ee_message_envelopes_sender_counter_idx').on(
+      t.channelId,
+      t.senderDeviceId,
+      t.senderKeyId,
+      t.counter
+    ),
+    index('e2ee_message_envelopes_channel_epoch_idx').on(t.channelId, t.epoch),
+    index('e2ee_message_envelopes_channel_created_idx').on(t.channelId, t.createdAt)
+  ]
+);
+
 const messages = sqliteTable(
   'messages',
   {
@@ -205,6 +557,10 @@ const messages = sqliteTable(
     channelId: integer('channel_id')
       .notNull()
       .references(() => channels.id, { onDelete: 'cascade' }),
+    parentMessageId: integer('parent_message_id').references(
+      (): AnySQLiteColumn => messages.id,
+      { onDelete: 'set null' }
+    ),
     editable: integer('editable', { mode: 'boolean' }).default(true),
     metadata: text('metadata', { mode: 'json' }).$type<TMessageMetadata[]>(),
     createdAt: integer('created_at').notNull(),
@@ -213,7 +569,9 @@ const messages = sqliteTable(
   (t) => [
     index('messages_user_idx').on(t.userId),
     index('messages_channel_idx').on(t.channelId),
+    index('messages_parent_idx').on(t.parentMessageId),
     index('messages_created_idx').on(t.createdAt),
+    index('messages_parent_created_idx').on(t.parentMessageId, t.createdAt),
     index('messages_channel_created_idx').on(t.channelId, t.createdAt)
   ]
 );
@@ -443,6 +801,20 @@ export {
   messageFiles,
   messageReactions,
   messages,
+  authSessionRefreshTokens,
+  authSessions,
+  authIdentities,
+  channelEpochDeviceEnvelopes,
+  channelStateCommitments,
+  deviceAuthorizations,
+  devicePrekeys,
+  e2eeDevices,
+  e2eeMessageEnvelopes,
+  replayWindows,
+  oauthStates,
+  senderNonceAllocators,
+  userRootKeys,
+  userDevices,
   pluginData,
   rolePermissions,
   roles,

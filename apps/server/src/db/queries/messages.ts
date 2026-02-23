@@ -5,8 +5,12 @@ import type {
   TMessage,
   TMessageReaction
 } from '@sharkord/shared';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { db } from '..';
+import {
+  enforceE2EEMessageBody,
+  isE2EEMessageMarker,
+} from '../../e2ee/message-content';
 import { generateFileToken } from '../../helpers/files-crypto';
 import {
   channels,
@@ -94,10 +98,19 @@ const getMessage = async (
     file: r.file
   }));
 
+  const replyCountRow = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(messages)
+    .where(eq(messages.parentMessageId, message.id))
+    .get();
+  const isE2EE = isE2EEMessageMarker(message.content);
+
   return {
     ...message,
-    files: filesForMessage ?? [],
-    reactions: reactions ?? []
+    content: enforceE2EEMessageBody(message.content),
+    files: isE2EE ? (filesForMessage ?? []) : [],
+    reactions: reactions ?? [],
+    threadReplyCount: Number(replyCountRow?.count || 0)
   };
 };
 

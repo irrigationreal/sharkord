@@ -1,18 +1,16 @@
-import { sha256, UploadHeaders } from '@sharkord/shared';
-import jwt from 'jsonwebtoken';
+import { UploadHeaders } from '@sharkord/shared';
 import { appRouter } from '../routers';
 import { createMockContext } from './context';
-import { TEST_SECRET_TOKEN } from './seed';
 import { testsBaseUrl } from './setup';
+import { createAuthSession } from '../db/queries/auth-sessions';
 
 const getMockedToken = async (userId: number) => {
-  const hashedToken = await sha256(TEST_SECRET_TOKEN);
-
-  const token = jwt.sign({ userId: userId }, hashedToken, {
-    expiresIn: '86400s'
+  const { accessToken } = await createAuthSession(userId, {
+    ip: '127.0.0.1',
+    userAgent: 'bun-test'
   });
 
-  return token;
+  return accessToken;
 };
 
 const getCaller = async (userId: number) => {

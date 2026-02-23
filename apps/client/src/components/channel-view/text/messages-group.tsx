@@ -3,16 +3,20 @@ import { UserAvatar } from '@/components/user-avatar';
 import { useIsOwnUser, useUserById } from '@/features/server/users/hooks';
 import { getRenderedUsername } from '@/helpers/get-rendered-username';
 import { cn } from '@/lib/utils';
-import { DELETED_USER_IDENTITY_AND_NAME, type TJoinedMessage } from '@sharkord/shared';
+import {
+  DELETED_USER_IDENTITY_AND_NAME,
+  type TJoinedMessage
+} from '@sharkord/shared';
 import { format } from 'date-fns';
 import { memo } from 'react';
 import { Message } from './message';
 
 type TMessagesGroupProps = {
   group: TJoinedMessage[];
+  onOpenThread?: (message: TJoinedMessage) => void;
 };
 
-const MessagesGroup = memo(({ group }: TMessagesGroupProps) => {
+const MessagesGroup = memo(({ group, onOpenThread }: TMessagesGroupProps) => {
   const firstMessage = group[0];
   const user = useUserById(firstMessage.userId);
   const date = new Date(firstMessage.createdAt);
@@ -47,7 +51,11 @@ const MessagesGroup = memo(({ group }: TMessagesGroupProps) => {
         </div>
         <div className="flex min-w-0 flex-col">
           {group.map((message) => (
-            <Message key={message.id} message={message} />
+            <Message
+              key={message.id}
+              message={message}
+              onOpenThread={onOpenThread}
+            />
           ))}
         </div>
       </div>

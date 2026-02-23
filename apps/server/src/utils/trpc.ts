@@ -23,6 +23,7 @@ export type Context = {
   pubsub: typeof pubsub;
   user: TUser;
   userId: number;
+  sessionId?: number;
   token: string;
   currentVoiceChannelId: number | undefined;
   hasPermission: (

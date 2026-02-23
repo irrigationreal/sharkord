@@ -17,8 +17,6 @@ describe('/upload', () => {
   let token: string;
 
   beforeEach(async () => {
-    if (token) return;
-
     const response = await login('testowner', 'password123');
     const data: any = await response.json();
 

@@ -136,6 +136,114 @@ describe('messages router', () => {
     expect(result.messages.length).toBe(3);
   });
 
+  test('should support thread replies and keep channel list top-level only', async () => {
+    const { caller } = await initTest();
+
+    await caller.messages.send({
+      channelId: 1,
+      content: 'Root message',
+      files: []
+    });
+
+    const topLevelBeforeReply = await caller.messages.get({
+      channelId: 1,
+      cursor: null,
+      limit: 50,
+      parentMessageId: null
+    });
+    const rootMessageId = topLevelBeforeReply.messages.find(
+      (message) => message.content === 'Root message'
+    )!.id;
+
+    await caller.messages.send({
+      channelId: 1,
+      content: 'Thread reply',
+      parentMessageId: rootMessageId,
+      files: []
+    });
+
+    const topLevelAfterReply = await caller.messages.get({
+      channelId: 1,
+      cursor: null,
+      limit: 50,
+      parentMessageId: null
+    });
+    const rootMessage = topLevelAfterReply.messages.find(
+      (message) => message.id === rootMessageId
+    );
+
+    expect(rootMessage).toBeDefined();
+    expect(rootMessage?.threadReplyCount).toBe(1);
+    expect(
+      topLevelAfterReply.messages.some((message) => message.content === 'Thread reply')
+    ).toBe(false);
+
+    const threadPage = await caller.messages.get({
+      channelId: 1,
+      cursor: null,
+      limit: 50,
+      parentMessageId: rootMessageId
+    });
+
+    expect(threadPage.messages).toHaveLength(1);
+    expect(threadPage.messages[0]?.content).toBe('Thread reply');
+    expect(threadPage.messages[0]?.parentMessageId).toBe(rootMessageId);
+  });
+
+  test('should normalize nested thread replies to the root message', async () => {
+    const { caller } = await initTest();
+
+    await caller.messages.send({
+      channelId: 1,
+      content: 'Nested root',
+      files: []
+    });
+
+    const topLevelPage = await caller.messages.get({
+      channelId: 1,
+      cursor: null,
+      limit: 50
+    });
+    const rootId = topLevelPage.messages.find(
+      (message) => message.content === 'Nested root'
+    )!.id;
+
+    await caller.messages.send({
+      channelId: 1,
+      content: 'First reply',
+      parentMessageId: rootId,
+      files: []
+    });
+
+    const threadPage = await caller.messages.get({
+      channelId: 1,
+      cursor: null,
+      limit: 50,
+      parentMessageId: rootId
+    });
+    const firstReplyId = threadPage.messages[0]!.id;
+
+    await caller.messages.send({
+      channelId: 1,
+      content: 'Reply to reply',
+      parentMessageId: firstReplyId,
+      files: []
+    });
+
+    const threadPageAfter = await caller.messages.get({
+      channelId: 1,
+      cursor: null,
+      limit: 50,
+      parentMessageId: rootId
+    });
+    const nestedReply = threadPageAfter.messages.find(
+      (message) => message.content === 'Reply to reply'
+    );
+
+    expect(nestedReply).toBeDefined();
+    expect(nestedReply?.parentMessageId).toBe(rootId);
+  });
+
   test('should edit own message', async () => {
     const { caller } = await initTest();
 

@@ -13,7 +13,9 @@
     "format": "bun run --filter '*' format",
     "check-types": "bun run --filter '*' check-types",
     "lint": "bun run --filter '*' lint",
+    "e2ee-guard": "bash scripts/e2ee-guard.sh",
     "knip": "knip",
+    "security-check": "bunx npm audit --audit-level=high",
     "knip:production": "knip --production",
     "magic": "bun run format && bun run check-types && bun run lint"
   },

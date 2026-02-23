@@ -1,5 +1,6 @@
 import type http from 'http';
 import { UAParser } from 'ua-parser-js';
+import { config } from '../config';
 import type { TConnectionInfo } from '../types';
 
 // TODO: this code is shit and needs to be improved later
@@ -9,20 +10,25 @@ const getWsIp = (
   req: http.IncomingMessage
 ): string | undefined => {
   const headers = req?.headers || {};
-
-  let ip =
-    headers['cf-connecting-ip'] ||
-    headers['cf-real-ip'] ||
-    headers['x-real-ip'] ||
-    headers['x-forwarded-for'] ||
-    headers['x-client-ip'] ||
-    headers['x-cluster-client-ip'] ||
-    headers['forwarded-for'] ||
-    headers['forwarded'] ||
+  const remoteAddress =
     ws?._socket?.remoteAddress ||
     ws?.socket?.remoteAddress ||
     req?.socket?.remoteAddress ||
     req?.connection?.remoteAddress;
+
+  let ip = remoteAddress;
+
+  if (config.server.trustProxy) {
+    ip =
+      headers['cf-connecting-ip'] ||
+      headers['cf-real-ip'] ||
+      headers['x-real-ip'] ||
+      headers['x-forwarded-for'] ||
+      headers['x-client-ip'] ||
+      headers['x-cluster-client-ip'] ||
+      headers['forwarded-for'] ||
+      headers['forwarded'];
+  }
 
   if (!ip) return undefined;
 

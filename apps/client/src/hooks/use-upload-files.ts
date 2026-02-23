@@ -1,12 +1,17 @@
+import {
+  prepareStrictE2EEFileForUpload,
+  registerStrictTempFileEnvelope,
+  removeStrictTempFileEnvelope
+} from '@/features/e2ee/shadow';
 import { useCan, usePublicServerSettings } from '@/features/server/hooks';
-import { uploadFiles } from '@/helpers/upload-file';
+import { uploadFile } from '@/helpers/upload-file';
 import { Permission, type TTempFile } from '@sharkord/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 // TODO: check if it works in all browsers
 
-const useUploadFiles = (disabled: boolean = false) => {
+const useUploadFiles = (disabled: boolean = false, channelId?: number) => {
   const [files, setFiles] = useState<TTempFile[]>([]);
   const filesRef = useRef<TTempFile[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -24,12 +29,48 @@ const useUploadFiles = (disabled: boolean = false) => {
   }, []);
 
   const removeFile = useCallback((id: string) => {
+    removeStrictTempFileEnvelope(id);
     setFiles((prevFiles) => prevFiles.filter((file) => file.id !== id));
   }, []);
 
   const clearFiles = useCallback(() => {
+    filesRef.current.forEach((file) => removeStrictTempFileEnvelope(file.id));
     setFiles([]);
   }, []);
+
+  const uploadWithCurrentMode = useCallback(
+    async (filesToUpload: File[]): Promise<TTempFile[]> => {
+      if (!channelId) {
+        toast.error('E2EE uploads require a channel context');
+        return [];
+      }
+
+      const uploadedFiles: TTempFile[] = [];
+
+      for (const file of filesToUpload) {
+        const prepared = await prepareStrictE2EEFileForUpload(file);
+        const uploaded = await uploadFile(prepared.uploadFile);
+
+        if (!uploaded) continue;
+
+        registerStrictTempFileEnvelope(
+          uploaded.id,
+          prepared.envelope,
+          prepared.ciphertextSha256Hex
+        );
+
+        uploadedFiles.push({
+          ...uploaded,
+          originalName: prepared.envelope.originalName,
+          extension:
+            prepared.envelope.originalName.split('.').pop()?.toLowerCase() || ''
+        });
+      }
+
+      return uploadedFiles;
+    },
+    [channelId]
+  );
 
   const openFileDialog = useCallback(() => {
     if (disabled) return;
@@ -85,13 +126,13 @@ const useUploadFiles = (disabled: boolean = false) => {
 
       setUploadingSize((size) => size + total);
 
-      const uploaded = await uploadFiles(filesToUpload);
+      const uploaded = await uploadWithCurrentMode(filesToUpload);
 
       addFiles(uploaded);
       setUploading(false);
       setUploadingSize((size) => size - total);
     },
-    [addFiles, can, settings, disabled]
+    [addFiles, can, settings, disabled, uploadWithCurrentMode]
   );
 
   useEffect(() => {
@@ -136,7 +177,7 @@ const useUploadFiles = (disabled: boolean = false) => {
 
       setUploadingSize((size) => size + total);
 
-      const files = await uploadFiles(filesToUpload);
+      const files = await uploadWithCurrentMode(filesToUpload);
 
       addFiles(files);
       setUploading(false);
@@ -185,7 +226,7 @@ const useUploadFiles = (disabled: boolean = false) => {
 
       setUploadingSize((size) => size + total);
 
-      const files = await uploadFiles(filesToUpload);
+      const files = await uploadWithCurrentMode(filesToUpload);
 
       addFiles(files);
       setUploading(false);
@@ -205,7 +246,7 @@ const useUploadFiles = (disabled: boolean = false) => {
       document.removeEventListener('dragover', handleDragOver);
       document.removeEventListener('drop', handleDrop);
     };
-  }, [addFiles, can, settings, disabled]);
+  }, [addFiles, can, settings, disabled, uploadWithCurrentMode]);
 
   const fileInputProps = useMemo(
     () => ({

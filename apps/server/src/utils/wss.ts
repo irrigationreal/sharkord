@@ -14,10 +14,18 @@ import {
 } from '@trpc/server/adapters/ws';
 import { eq } from 'drizzle-orm';
 import http from 'http';
-import { WebSocketServer } from 'ws';
+import {
+  WebSocket as WsWebSocketClass,
+  WebSocketServer,
+  type WebSocket as WsWebSocket
+} from 'ws';
 import { db } from '../db';
 import { getAllChannelUserPermissions } from '../db/queries/channels';
-import { getUserById, getUserByToken } from '../db/queries/users';
+import {
+  getUserById,
+  getSessionContextByToken,
+  getUserByToken
+} from '../db/queries/users';
 import { channels } from '../db/schema';
 import { getWsInfo } from '../helpers/get-ws-info';
 import { logger } from '../logger';
@@ -37,13 +45,54 @@ const getUserIp = (userId: number): string | undefined => {
   return usersIpMap.get(userId);
 };
 
+const clearWsAuth = (ws: WsWebSocket) => {
+  ws.userId = undefined;
+  ws.token = '';
+};
+
+const closeWsConnection = (ws: WsWebSocket) => {
+  if (
+    ws.readyState === WsWebSocketClass.OPEN ||
+    ws.readyState === WsWebSocketClass.CONNECTING
+  ) {
+    ws.close(1008, 'Session revoked');
+  }
+};
+
+const invalidateWsAuthByToken = (token: string) => {
+  if (!wss || !token) return;
+
+  for (const ws of wss.clients) {
+    if (ws.token === token) {
+      clearWsAuth(ws);
+      closeWsConnection(ws);
+    }
+  }
+};
+
+const invalidateWsAuthByUserId = (userId: number) => {
+  if (!wss) return;
+
+  for (const ws of wss.clients) {
+    if (ws.userId === userId) {
+      clearWsAuth(ws);
+      closeWsConnection(ws);
+    }
+  }
+};
+
 const createContext = async ({
   info,
   req
 }: CreateWSSContextFnOptions): Promise<Context> => {
   const { token } = info.connectionParams as TConnectionParams;
 
-  const decodedUser = await getUserByToken(token);
+  const tokenContext = await getSessionContextByToken(token);
+  const decodedUser = tokenContext?.userId
+    ? await getUserById(tokenContext.userId)
+    : await getUserByToken(token);
+
+  const sessionId = tokenContext?.sessionId;
 
   invariant(decodedUser, {
     code: 'UNAUTHORIZED',
@@ -203,6 +252,7 @@ const createContext = async ({
     user: decodedUser,
     authenticated: false,
     userId: decodedUser.id,
+    sessionId,
     handshakeHash: '',
     currentVoiceChannelId: undefined,
     hasPermission,
@@ -288,4 +338,10 @@ const createWsServer = async (server: http.Server) => {
   });
 };
 
-export { createContext, createWsServer, getUserIp };
+export {
+  createContext,
+  createWsServer,
+  getUserIp,
+  invalidateWsAuthByToken,
+  invalidateWsAuthByUserId
+};

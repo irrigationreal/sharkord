@@ -1,6 +1,7 @@
 import { t } from '../utils/trpc';
 import { categoriesRouter } from './categories';
 import { channelsRouter } from './channels';
+import { e2eeRouter } from './e2ee';
 import { emojisRouter } from './emojis';
 import { filesRouter } from './files';
 import { invitesRouter } from './invites';
@@ -22,7 +23,8 @@ const appRouter = t.router({
   invites: invitesRouter,
   voice: voiceRouter,
   categories: categoriesRouter,
-  plugins: pluginsRouter
+  plugins: pluginsRouter,
+  e2ee: e2eeRouter
 });
 
 type AppRouter = typeof appRouter;

@@ -1,9 +1,4 @@
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Group } from '@/components/ui/group';
-import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
+import { PluginSlotRenderer } from '@/components/plugin-slot-renderer';
 import { connect } from '@/features/server/actions';
 import { useInfo } from '@/features/server/hooks';
 import { getFileUrl, getUrlFromServer } from '@/helpers/get-file-url';
@@ -11,12 +6,25 @@ import {
   getLocalStorageItem,
   LocalStorageKey,
   removeLocalStorageItem,
-  SessionStorageKey,
-  setLocalStorageItem,
-  setSessionStorageItem
+  setLocalStorageItem
 } from '@/helpers/storage';
+import { setAuthSession } from '@/helpers/auth-session';
 import { useForm } from '@/hooks/use-form';
-import { memo, useCallback, useMemo, useState } from 'react';
+import { PluginSlot } from '@sharkord/shared';
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Group,
+  Input,
+  Switch
+} from '@sharkord/ui';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 const Connect = memo(() => {
@@ -26,7 +34,7 @@ const Connect = memo(() => {
     rememberCredentials: boolean;
   }>({
     identity: getLocalStorageItem(LocalStorageKey.IDENTITY) || '',
-    password: getLocalStorageItem(LocalStorageKey.USER_PASSWORD) || '',
+    password: '',
     rememberCredentials: !!getLocalStorageItem(
       LocalStorageKey.REMEMBER_CREDENTIALS
     )
@@ -41,6 +49,10 @@ const Connect = memo(() => {
     return invite || undefined;
   }, []);
 
+  useEffect(() => {
+    removeLocalStorageItem(LocalStorageKey.USER_PASSWORD);
+  }, []);
+
   const onRememberCredentialsChange = useCallback(
     (checked: boolean) => {
       onChange('rememberCredentials', checked);
@@ -49,6 +61,7 @@ const Connect = memo(() => {
         setLocalStorageItem(LocalStorageKey.REMEMBER_CREDENTIALS, 'true');
       } else {
         removeLocalStorageItem(LocalStorageKey.REMEMBER_CREDENTIALS);
+        removeLocalStorageItem(LocalStorageKey.USER_PASSWORD);
       }
     },
     [onChange]
@@ -78,13 +91,24 @@ const Connect = memo(() => {
         return;
       }
 
-      const data = (await response.json()) as { token: string };
+      const data = (await response.json()) as {
+        token: string;
+        refreshToken: string;
+        accessExpiresAt: number;
+        refreshExpiresAt: number;
+      };
 
-      setSessionStorageItem(SessionStorageKey.TOKEN, data.token);
+      setAuthSession({
+        token: data.token,
+        refreshToken: data.refreshToken,
+        accessExpiresAt: data.accessExpiresAt,
+        refreshExpiresAt: data.refreshExpiresAt
+      });
 
       if (values.rememberCredentials) {
         setLocalStorageItem(LocalStorageKey.IDENTITY, values.identity);
-        setLocalStorageItem(LocalStorageKey.USER_PASSWORD, values.password);
+      } else {
+        removeLocalStorageItem(LocalStorageKey.IDENTITY);
       }
 
       await connect();
@@ -124,6 +148,7 @@ const Connect = memo(() => {
               </span>
             )}
           </CardTitle>
+          <PluginSlotRenderer slotId={PluginSlot.CONNECT_SCREEN} />
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           {info?.description && (

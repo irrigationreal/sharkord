@@ -1,24 +1,59 @@
+import { tryHydrateMessagesWithEnvelopeDecrypt } from '@/features/e2ee/shadow';
+import { store } from '@/features/store';
 import { getTRPCClient } from '@/lib/trpc';
 import type { TJoinedMessage } from '@sharkord/shared';
+import { ownUserIdSelector } from '../users/selectors';
 import {
   addMessages,
   addTypingUser,
   deleteMessage,
+  upsertThreadMessage,
   updateMessage
 } from './actions';
+import { primeEncryptedNotifications } from './notifications';
 
 const subscribeToMessages = () => {
   const trpc = getTRPCClient();
+  const getOwnUserId = () => ownUserIdSelector(store.getState());
+  primeEncryptedNotifications();
 
   const onMessageSub = trpc.messages.onNew.subscribe(undefined, {
-    onData: (message: TJoinedMessage) =>
-      addMessages(message.channelId, [message], {}, true),
+    onData: async (message: TJoinedMessage) => {
+      const hydrated = await tryHydrateMessagesWithEnvelopeDecrypt(
+        message.channelId,
+        [message],
+        getOwnUserId()
+      );
+      const target = hydrated[0];
+
+      if (!target) return;
+
+      if (typeof target.parentMessageId === 'number') {
+        upsertThreadMessage(message.channelId, target);
+      } else {
+        addMessages(message.channelId, hydrated, {}, true);
+      }
+    },
     onError: (err) => console.error('onMessage subscription error:', err)
   });
 
   const onMessageUpdateSub = trpc.messages.onUpdate.subscribe(undefined, {
-    onData: (message: TJoinedMessage) =>
-      updateMessage(message.channelId, message),
+    onData: async (message: TJoinedMessage) => {
+      const hydrated = await tryHydrateMessagesWithEnvelopeDecrypt(
+        message.channelId,
+        [message],
+        getOwnUserId()
+      );
+      const target = hydrated[0];
+
+      if (!target) return;
+
+      if (typeof target.parentMessageId === 'number') {
+        upsertThreadMessage(message.channelId, target);
+      } else {
+        updateMessage(message.channelId, target);
+      }
+    },
     onError: (err) => console.error('onMessageUpdate subscription error:', err)
   });
 
